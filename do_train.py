@@ -35,7 +35,7 @@ def train(args, data_processor, model, tokenizer, role):
     if args.local_rank in [-1, 0]:
         tb_writer = SummaryWriter()
 
-    args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
+    args.train_batch_size = args.per_device_train_batch_size * max(1, args.n_gpu)
     _, train_dataset = data_processor.load_and_cache_data(role, tokenizer)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
@@ -83,7 +83,7 @@ def train(args, data_processor, model, tokenizer, role):
     logger.info("***** Running training *****")
     logger.info("Num examples = %d", len(train_dataset))
     logger.info("Num Epochs = %d", args.num_train_epochs)
-    logger.info("Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size)
+    logger.info("Instantaneous batch size per GPU = %d", args.per_device_train_batch_size)
     logger.info(
         "  Total train batch size (w. parallel, distributed & accumulation) = %d",
         args.train_batch_size
@@ -197,7 +197,7 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
     if not os.path.exists(output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(output_dir)
 
-    args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
+    args.eval_batch_size = args.per_device_eval_batch_size * max(1, args.n_gpu)
     examples, dataset = data_processor.load_and_cache_data(role, tokenizer)
     # Note that DistributedSampler samples randomly
     eval_sampler = SequentialSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
@@ -217,7 +217,7 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
                 "attention_mask": batch[1].to(args.device),
             }
 
-            outputs = model.generate(**inputs, max_length=args.max_tgt_length, num_beams=1)
+            outputs = model.generate(**inputs, max_length=args.max_tgt_length)
             eval_outputs.extend(generate_outputs(outputs.detach().cpu().tolist(), tokenizer))
 
     eval_outputs = refine_outputs(examples, eval_outputs)
@@ -305,9 +305,11 @@ def main():
     parser.add_argument(
         "--evaluate_during_training", action="store_true", help="Rul evaluation during training at each logging step."
     )
-    parser.add_argument("--per_gpu_train_batch_size", default=8, type=int, help="Batch size per GPU/CPU for training.")
     parser.add_argument(
-        "--per_gpu_eval_batch_size", default=8, type=int, help="Batch size per GPU/CPU for evaluation."
+        "--per_device_train_batch_size", default=8, type=int, help="Batch size per GPU/CPU for training."
+    )
+    parser.add_argument(
+        "--per_device_eval_batch_size", default=8, type=int, help="Batch size per GPU/CPU for evaluation."
     )
     parser.add_argument("--learning_rate", default=5e-5, type=float, help="The initial learning rate for Adam.")
     parser.add_argument(

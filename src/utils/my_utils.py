@@ -155,7 +155,7 @@ def make_batch_iter(data, batch_size, shuffle):
 def generate_outputs(outputs, tokenizer):
     generated = []
     for line in outputs:
-        generated.append(tokenizer.decode(line, skip_special_tokens=True))
+        generated.append(tokenizer.decode(line, skip_special_tokens=True, clean_up_tokenization_spaces=False))
     return generated
 
 

@@ -59,13 +59,12 @@ def main():
                 "input_ids": encoded["input_ids"].to(model.device),
                 "attention_mask": encoded["attention_mask"].to(model.device),
             }
-            outputs = model.generate(
-                **inputs,
-                max_length=args.max_tgt_length,
-                num_beams=1,
-                num_return_sequences=1,
+            outputs = model.generate(**inputs, max_length=args.max_tgt_length)
+            generated = tokenizer.batch_decode(
+                outputs.detach().cpu().tolist(),
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
             )
-            generated = tokenizer.batch_decode(outputs.detach().cpu().tolist(), skip_special_tokens=True)
             targets.extend(generated)
         save_file(targets, os.path.join(args.output_dir, "{}.target".format(split)))
 

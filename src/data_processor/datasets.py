@@ -34,7 +34,8 @@ def register_dataset(dataset_class):
 
 def load_dataset(
         dataset_name: str,
-        data_args: DataTrainingArguments,
+        data_args,
+        # data_args: DataTrainingArguments,
         tokenizer: PreTrainedTokenizer,
         split: str,
         max_input_length: int,
