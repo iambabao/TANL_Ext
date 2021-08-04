@@ -30,7 +30,7 @@ def main():
     parser.add_argument('--data_dir', type=str, required=True, help='')
     parser.add_argument('--dataset_name', type=str, required=True, help='')
     parser.add_argument('--dataset_split', type=str, required=True, help='')
-    parser.add_argument('--dataset_episode', type=str, required=True, help='')
+    parser.add_argument('--dataset_episode', type=int, required=True, help='')
     parser.add_argument('--max_seq_length', type=int, required=True, help='')
     parser.add_argument('--max_output_seq_length', type=int, default=None, help='')
     parser.add_argument('--max_seq_length_eval', type=int, default=None, help='')
