@@ -36,7 +36,7 @@ def train(args, data_processor, model, tokenizer, role):
         tb_writer = SummaryWriter()
 
     args.train_batch_size = args.per_device_train_batch_size * max(1, args.n_gpu)
-    _, train_dataset = data_processor.load_and_cache_data(role, tokenizer)
+    _, train_dataset = data_processor.load_and_cache_data(role, tokenizer, args.ratio)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
 
@@ -198,7 +198,7 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
         os.makedirs(output_dir)
 
     args.eval_batch_size = args.per_device_eval_batch_size * max(1, args.n_gpu)
-    examples, dataset = data_processor.load_and_cache_data(role, tokenizer)
+    examples, dataset = data_processor.load_and_cache_data(role, tokenizer, args.ratio)
     # Note that DistributedSampler samples randomly
     eval_sampler = SequentialSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
     eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
@@ -290,6 +290,7 @@ def main():
     )
 
     # Other parameters
+    parser.add_argument("--ratio", default=None, type=str, help="")
     parser.add_argument(
         "--config_name", default="", type=str, help="Pretrained config name or path if not the same as model_name"
     )

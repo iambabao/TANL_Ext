@@ -105,21 +105,21 @@ class DataProcessor:
 
         self.data_dir = data_dir
         self.cache_dir = os.path.join(data_dir, "cache")
+
         self.overwrite_cache = overwrite_cache
 
-    def load_and_cache_data(self, role, tokenizer):
+    def load_and_cache_data(self, role, tokenizer, ratio=None):
         os.makedirs(self.cache_dir, exist_ok=True)
 
-        ratio = '0.50'
-        cached_examples = os.path.join(self.cache_dir, "cached_example_{}_{}".format(role, ratio))
+        if ratio is not None: role = '{}_{}'.format(role, ratio)
+        cached_examples = os.path.join(self.cache_dir, "cached_example_{}".format(role))
         if os.path.exists(cached_examples) and not self.overwrite_cache:
             logger.info("Loading examples from cached file {}".format(cached_examples))
             examples = torch.load(cached_examples)
         else:
             examples = []
             for line in tqdm(
-                # list(read_json_lines(os.path.join(self.data_dir, "data_{}.json".format(role)))),
-                list(read_json_lines(os.path.join(self.data_dir, "{}.{}.json".format(role, ratio)))),
+                list(read_json_lines(os.path.join(self.data_dir, "data_{}.json".format(role)))),
                 desc="Loading Examples"
             ):
                 sample = {'guid': len(examples)}
@@ -130,12 +130,11 @@ class DataProcessor:
 
         cached_features = os.path.join(
             self.cache_dir,
-            "cached_feature_{}_{}_{}_{}_{}".format(
+            "cached_feature_{}_{}_{}_{}".format(
                 role,
                 list(filter(None, self.model_name_or_path.split("/"))).pop(),
                 self.max_src_length,
                 self.max_tgt_length,
-                ratio,
             ),
         )
         if os.path.exists(cached_features) and not self.overwrite_cache:
