@@ -83,6 +83,63 @@ def generate_stage_two(task, role, keep_ratio=1.00):
     save_json_lines(outputs, os.path.join(output_dir, 'data_{}_{:03d}.json'.format(role, int(keep_ratio * 100))))
 
 
+def collect_entity_type(task):
+    entity_pattern = re.compile(r'\[([^=\[\]|]+?)\|([^=\[\]|]+?)\]')
+    relation_pattern = re.compile(r'\[(.+?)\|([^=\[\]|]+?)\|([^\[\]]+?)\]')
+
+    entity_type_set = set()
+    relation_type_set = set()
+    input_dir = 'data/formatted/{}_t5-base_512/episode_00'.format(task)
+    for filename in os.listdir(input_dir):
+        for line in read_file(os.path.join(input_dir, filename)):
+            # remove relation
+            match = relation_pattern.search(line)
+            while match:
+                relation_type_set.add(match.group(3).split('=')[0].strip())
+                line = line.replace(match.group(), '[ {} | {} ]'.format(match.group(1).strip(), match.group(2).strip()))
+                match = relation_pattern.search(line)
+
+            match = entity_pattern.search(line)
+            while match:
+                entity_type_set.add(match.group(2).strip())
+                line = line.replace(match.group(), match.group(1).strip())
+                match = entity_pattern.search(line)
+
+    output_dir = 'data/stage_two_with_noise/{}'.format(task)
+    os.makedirs(output_dir, exist_ok=True)
+    save_file(entity_type_set, os.path.join(output_dir, 'entity_type.txt'))
+    save_file(relation_type_set, os.path.join(output_dir, 'relation_type.txt'))
+
+
+def generate_stage_two_with_noise(task, role, error_ratio=1.00):
+    entity_pattern = re.compile(r'\[([^=\[\]|]+?)\|([^=\[\]|]+?)\]')
+    relation_pattern = re.compile(r'\[(.+?)\|([^=\[\]|]+?)\|([^\[\]]+?)\]')
+    entity_type_set = set(_.strip() for _ in read_file('data/stage_two_with_noise/{}/entity_type.txt'.format(task)))
+
+    outputs = []
+    for line in read_file('data/formatted/{}_t5-base_512/episode_00/{}.target'.format(task, role)):
+        line, raw_line = line.strip(), line.strip()
+
+        # remove relation
+        match = relation_pattern.search(line)
+        while match:
+            line = line.replace(match.group(), '[ {} | {} ]'.format(match.group(1).strip(), match.group(2).strip()))
+            match = relation_pattern.search(line)
+
+        # replace entity
+        for match in entity_pattern.finditer(line):
+            if random.random() < error_ratio:
+                entity, entity_type = match.group(1), match.group(2)
+                line = line.replace(
+                    match.group(),
+                    '[ {} | {} ]'.format(entity, random.choice(list(entity_type_set - {entity_type}))),
+                )
+
+        outputs.append({'source': line, 'target': raw_line})
+
+    save_json_lines(outputs, 'data/stage_two_with_noise/{}/data_{}_{:03d}.json'.format(task, role, int(error_ratio * 100)))
+
+
 def main():
     init_logger(logging.INFO)
 
@@ -105,6 +162,18 @@ def main():
             if task != 'ade':
                 generate_stage_two(task, 'valid', ratio)
             generate_stage_two(task, 'test', ratio)
+
+    # generate data for stage two training with noise
+    tasks = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
+    ratios = [0.00, 0.25, 0.50, 0.75]
+    for task in tasks:
+        collect_entity_type(task)
+        for ratio in ratios:
+            logger.info('processing: {} {}'.format(task, ratio))
+            generate_stage_two_with_noise(task, 'train', ratio)
+            if task != 'ade':
+                generate_stage_two_with_noise(task, 'valid', ratio)
+            generate_stage_two_with_noise(task, 'test', ratio)
 
 
 if __name__ == '__main__':
