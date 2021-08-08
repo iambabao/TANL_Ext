@@ -165,7 +165,7 @@ def main():
 
     # generate data for stage two training with noise
     tasks = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
-    ratios = [0.00, 0.25, 0.50, 0.75]
+    ratios = [0.25, 0.50, 0.75, 1.00]
     for task in tasks:
         collect_entity_type(task)
         for ratio in ratios:
