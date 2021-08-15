@@ -204,12 +204,23 @@ def generate_stage_two_with_redundant(task, role, error_ratio=0.50, redundant_ra
                 s = line[start_index:start].strip()
                 if len(s) > 0 and '[' not in s and ']' not in s and random.random() < redundant_ratio:
                     ss = s.split()
-                    left_index = random.randint(0, len(ss) // 2)
-                    right_index = random.randint(len(ss) // 2 + 1, len(ss))
-                    left = ' '.join(ss[:left_index]).strip()
-                    mid = ' '.join(ss[left_index:right_index]).strip()
-                    right = ' '.join(ss[right_index:]).strip()
-                    s = '{} [ {} | {} ] {}'.format(left, mid, random.choice(list(entity_type_set)), right).strip()
+                    if len(ss) <= 10:
+                        candidates = [ss]
+                    else:
+                        candidates = []
+                        batch_start = 0
+                        while batch_start < len(ss):
+                            candidates.append(ss[batch_start:min(batch_start + 5, len(ss))])
+                            batch_start += 5
+                    cur_ss = []
+                    for ss in candidates:
+                        left_index = random.randint(0, len(ss) // 2)
+                        right_index = random.randint(len(ss) // 2 + 1, len(ss))
+                        left = ' '.join(ss[:left_index]).strip()
+                        mid = ' '.join(ss[left_index:right_index]).strip()
+                        right = ' '.join(ss[right_index:]).strip()
+                        cur_ss.append('{} [ {} | {} ] {}'.format(left, mid, random.choice(list(entity_type_set)), right).strip())
+                    s = ' '.join(cur_ss).strip()
                 if len(s) > 0:
                     spans.append(s)
             spans.append(line[start:end].strip())
@@ -217,12 +228,23 @@ def generate_stage_two_with_redundant(task, role, error_ratio=0.50, redundant_ra
         s = line[start_index:].strip()
         if len(s) > 0 and '[' not in s and ']' not in s and random.random() < redundant_ratio:
             ss = s.split()
-            left_index = random.randint(0, len(ss) // 2)
-            right_index = random.randint(len(ss) // 2 + 1, len(ss))
-            left = ' '.join(ss[:left_index]).strip()
-            mid = ' '.join(ss[left_index:right_index]).strip()
-            right = ' '.join(ss[right_index:]).strip()
-            s = '{} [ {} | {} ] {}'.format(left, mid, random.choice(list(entity_type_set)), right).strip()
+            if len(ss) <= 10:
+                candidates = [ss]
+            else:
+                candidates = []
+                batch_start = 0
+                while batch_start < len(ss):
+                    candidates.append(ss[batch_start:min(batch_start + 5, len(ss))])
+                    batch_start += 5
+            cur_ss = []
+            for ss in candidates:
+                left_index = random.randint(0, len(ss) // 2)
+                right_index = random.randint(len(ss) // 2 + 1, len(ss))
+                left = ' '.join(ss[:left_index]).strip()
+                mid = ' '.join(ss[left_index:right_index]).strip()
+                right = ' '.join(ss[right_index:]).strip()
+                cur_ss.append('{} [ {} | {} ] {}'.format(left, mid, random.choice(list(entity_type_set)), right).strip())
+            s = ' '.join(cur_ss).strip()
         if len(s) > 0:
             spans.append(s)
 
@@ -280,7 +302,7 @@ def main():
     # generate data for stage two training with noise
     # tasks = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
     # error_ratios = [0.50]
-    # redundant_ratios = [0.25, 0.50, 0.75, 1.00]
+    # redundant_ratios = [0.25, 0.50, 0.75]
     # for task in tasks:
     #     for error_ratio in error_ratios:
     #         for redundant_ratio in redundant_ratios:
