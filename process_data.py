@@ -202,22 +202,31 @@ def generate_stage_two_with_redundant(task, role, error_ratio=0.50, redundant_ra
         for start, end in entity_spans:
             if start > start_index:
                 s = line[start_index:start].strip()
-                if '[' not in s and ']' not in s and random.random() < redundant_ratio:
+                if len(s) > 0 and '[' not in s and ']' not in s and random.random() < redundant_ratio:
                     ss = s.split()
                     left_index = random.randint(0, len(ss) // 2)
                     right_index = random.randint(len(ss) // 2 + 1, len(ss))
                     left = ' '.join(ss[:left_index]).strip()
                     mid = ' '.join(ss[left_index:right_index]).strip()
-                    # mid = '[ {} | {} ]'.format(' '.join(ss[left_index:right_index]).strip(), random.choice(list(entity_type_set)))
                     right = ' '.join(ss[right_index:]).strip()
                     s = '{} [ {} | {} ] {}'.format(left, mid, random.choice(list(entity_type_set)), right).strip()
-                    # s = '{} {} {}'.format(left, mid, right).strip()
-                spans.append(s)
+                if len(s) > 0:
+                    spans.append(s)
             spans.append(line[start:end].strip())
             start_index = end + 1
-        spans.append(line[start_index:])
-        line = ' '.join(spans)
+        s = line[start_index:].strip()
+        if len(s) > 0 and '[' not in s and ']' not in s and random.random() < redundant_ratio:
+            ss = s.split()
+            left_index = random.randint(0, len(ss) // 2)
+            right_index = random.randint(len(ss) // 2 + 1, len(ss))
+            left = ' '.join(ss[:left_index]).strip()
+            mid = ' '.join(ss[left_index:right_index]).strip()
+            right = ' '.join(ss[right_index:]).strip()
+            s = '{} [ {} | {} ] {}'.format(left, mid, random.choice(list(entity_type_set)), right).strip()
+        if len(s) > 0:
+            spans.append(s)
 
+        line = ' '.join(spans)
         outputs.append({'source': line, 'target': raw_line})
 
     root_dir = 'data/stage_two_with_redundant/{}'.format(task)
