@@ -111,9 +111,6 @@ def train(args, data_processor, model, tokenizer, role):
             outputs = model(**inputs)
             loss = outputs[0]
 
-            description = "Global step: {:>6d}, Loss: {:>.4f}".format(global_step, loss.item())
-            epoch_iterator.set_description(description)
-
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
             if args.gradient_accumulation_steps > 1:
@@ -126,6 +123,8 @@ def train(args, data_processor, model, tokenizer, role):
                 loss.backward()
 
             tr_loss += loss.item()
+            description = "Global step: {:>6d}, Loss: {:>.4f}".format(global_step, loss.item())
+            epoch_iterator.set_description(description)
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
