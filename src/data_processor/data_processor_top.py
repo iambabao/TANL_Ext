@@ -10,54 +10,15 @@
 
 import logging
 import os
-import copy
-import json
 import torch
+import numpy as np
 from tqdm import tqdm
-from torch.utils.data import TensorDataset
 
 from src.utils.my_utils import read_json_lines
 
 logger = logging.getLogger(__name__)
-
-
-class InputExample(object):
-    def __init__(self, guid, source, target):
-        self.guid = guid
-        self.source = source
-        self.target = target
-
-    def __repr__(self):
-        return str(self.to_json_string())
-
-    def to_dict(self):
-        """Serializes this instance to a Python dictionary."""
-        output = copy.deepcopy(self.__dict__)
-        return output
-
-    def to_json_string(self):
-        """Serializes this instance to a JSON string."""
-        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
-
-
-class InputFeatures(object):
-    def __init__(self, guid, input_ids, attention_mask=None, labels=None):
-        self.guid = guid
-        self.input_ids = input_ids
-        self.attention_mask = attention_mask
-        self.labels = labels
-
-    def __repr__(self):
-        return str(self.to_json_string())
-
-    def to_dict(self):
-        """Serializes this instance to a Python dictionary."""
-        output = copy.deepcopy(self.__dict__)
-        return output
-
-    def to_json_string(self):
-        """Serializes this instance to a JSON string."""
-        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
+task2id = {'ace2005_joint_er': 0, 'ade': 1, 'conll04': 2, 'nyt': 3}
+id2task = {0: 'ace2005_joint_er', 1: 'ade', 2: 'conll04', 3: 'nyt'}
 
 
 def convert_examples_to_features(examples, tokenizer, max_src_length=None, max_tgt_length=None):
@@ -68,19 +29,27 @@ def convert_examples_to_features(examples, tokenizer, max_src_length=None, max_t
 
     features = []
     for (ex_index, example) in enumerate(tqdm(examples, desc="Converting Examples")):
-        src_encoded = tokenizer(example.source, padding="max_length", truncation=True, max_length=max_src_length)
-        tgt_encoded = tokenizer(example.target, padding="max_length", truncation=True, max_length=max_tgt_length)
+        src_encoded = tokenizer(
+            "{} : {}".format(example["task_name"], example["source"]),
+            padding="max_length",
+            truncation=True,
+            max_length=max_src_length,
+        )
+        tgt_encoded = tokenizer(example["target"], padding="max_length", truncation=True, max_length=max_tgt_length)
         encoded = {
-            "guid": example.guid,
-            "input_ids": src_encoded["input_ids"],
-            "attention_mask": src_encoded["attention_mask"],
-            "labels": tgt_encoded["input_ids"],
+            "guid": example["guid"],
+            "task_name": example["task_name"],
+            "source": example["source"],
+            "input_ids": np.array(src_encoded["input_ids"], dtype=np.int),
+            "attention_mask": np.array(src_encoded["attention_mask"], dtype=np.int),
+            "labels": np.array(tgt_encoded["input_ids"], dtype=np.int),
         }
-        features.append(InputFeatures(**encoded))
+        features.append(encoded)
 
         if ex_index < 5:
             logger.info("*** Example ***")
-            logger.info("guid: {}".format(example.guid))
+            logger.info("guid: {}".format(encoded["guid"]))
+            logger.info("task_name: {}".format(encoded["task_name"]))
             logger.info("input_ids: {}".format(encoded["input_ids"]))
             logger.info("attention_mask: {}".format(encoded["attention_mask"]))
             logger.info("labels: {}".format(encoded["labels"]))
@@ -90,14 +59,14 @@ def convert_examples_to_features(examples, tokenizer, max_src_length=None, max_t
     return features
 
 
-class DataProcessor:
+class DataProcessorTop:
     def __init__(
             self,
             model_name_or_path,
             max_src_length,
             max_tgt_length,
             data_dir="",
-            overwrite_cache=False
+            overwrite_cache=False,
     ):
         self.model_name_or_path = model_name_or_path
         self.max_src_length = max_src_length
@@ -107,6 +76,8 @@ class DataProcessor:
         self.cache_dir = os.path.join(data_dir, "cache")
 
         self.overwrite_cache = overwrite_cache
+
+        self.transfer_matrix = {}  # TODO
 
     def load_and_cache_data(self, role, tokenizer, suffix=None):
         os.makedirs(self.cache_dir, exist_ok=True)
@@ -124,7 +95,7 @@ class DataProcessor:
             ):
                 sample = {'guid': len(examples)}
                 sample.update(line)
-                examples.append(InputExample(**sample))
+                examples.append(sample)
             logger.info("Saving examples into cached file {}".format(cached_examples))
             torch.save(examples, cached_examples)
 
@@ -145,11 +116,37 @@ class DataProcessor:
             logger.info("Saving features into cached file {}".format(cached_features))
             torch.save(features, cached_features)
 
-        return examples, self._create_tensor_dataset(features)
+        return examples, features
 
-    def _create_tensor_dataset(self, features):
-        all_input_ids = torch.tensor([_.input_ids for _ in features], dtype=torch.long)
-        all_attention_mask = torch.tensor([_.attention_mask for _ in features], dtype=torch.long)
-        all_labels = torch.tensor([_.labels for _ in features], dtype=torch.long)
+    def generate_augmented_data(self, args, model, tokenizer, batch):
+        raw_task_name = batch["task_name"]
+        new_task_name = batch["task_name"]  # TODO: sample new tasks according to transfer matrix
 
-        return TensorDataset(all_input_ids, all_attention_mask, all_labels)
+        source = ["{} : {}".format(task_name, source) for task_name, source in zip(new_task_name, batch["source"])]
+        encoded = tokenizer.batch_encode_plus(
+            source,
+            padding="max_length",
+            truncation=True,
+            max_length=self.max_src_length,
+            return_tensors="pt",
+        )
+        for key, value in encoded.items():
+            encoded[key] = value.to(args.device)
+        augmented_outputs = model.generate(**encoded, max_length=self.max_tgt_length).detach().cpu().tolist()
+
+        augmented_source = []
+        for task_name, line in zip(raw_task_name, augmented_outputs):
+            augmented_source.append("{} : {}".format(
+                task_name,
+                tokenizer.decode(line, skip_special_tokens=True, clean_up_tokenization_spaces=False),
+            ))
+
+        encoded = tokenizer.batch_encode_plus(
+            augmented_source,
+            padding="max_length",
+            truncation=True,
+            max_length=self.max_src_length,
+            return_tensors="pt",
+        )
+
+        return encoded

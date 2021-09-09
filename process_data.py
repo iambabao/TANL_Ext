@@ -70,6 +70,19 @@ def generate_pipeline_with_prefix(task, role):
     save_json_lines(outputs, os.path.join(root_dir, 'data_{}.json'.format(role)))
 
 
+def generate_pipeline_union(union_name, tasks, role):
+    outputs = []
+    for task in tasks:
+        src_fp = read_json_lines('data/pipeline/{}/stage_one/data_{}.json'.format(task, role))
+        tgt_fp = read_json_lines('data/pipeline/{}/stage_two/data_{}.json'.format(task, role))
+        for source, target in zip(src_fp, tgt_fp):
+            outputs.append({'source': source['source'], 'target': target['target'], 'task_name': task})
+
+    root_dir = 'data/pipeline_union/{}'.format(union_name)
+    os.makedirs(root_dir, exist_ok=True)
+    save_json_lines(outputs, os.path.join(root_dir, 'data_{}.json'.format(role)))
+
+
 def generate_stage_one_union(union_name, tasks, role, prefix='{}'):
     relation_pattern = re.compile(r'\[(.+?)\|([^=\[\]|]+?)\|([^\[\]]+?)\]')
 
@@ -297,6 +310,11 @@ def main():
     #     if task != 'ade':
     #         generate_pipeline_with_prefix(task, 'valid')
     #     generate_pipeline_with_prefix(task, 'test')
+
+    # generate data for multi-task pipeline training
+    # tasks = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
+    # generate_pipeline_union('210827', tasks, 'train')
+    # generate_pipeline_union('210827', tasks, 'test')
 
     # generate data for multi-task stage one training
     # tasks = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
