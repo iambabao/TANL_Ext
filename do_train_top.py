@@ -21,7 +21,8 @@ from transformers import AutoConfig, AutoTokenizer, AutoModelForSeq2SeqLM, set_s
 from transformers import WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup
 
 from src.data_processor import DataProcessorTop as DataProcessor
-from src.utils.my_utils import init_logger, save_json, save_json_lines, generate_outputs, refine_outputs
+from src.utils.my_utils import init_logger, save_json, save_json_lines, generate_outputs
+from src.utils.my_utils import refine_outputs_v2 as refine_outputs
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -36,7 +37,7 @@ def train(args, data_processor, model, tokenizer, role):
         tb_writer = SummaryWriter()
 
     args.train_batch_size = args.per_device_train_batch_size * max(1, args.n_gpu)
-    _, train_dataset = data_processor.load_and_cache_data(role, tokenizer, args.ratio)
+    _, train_dataset = data_processor.load_and_cache_data(role, tokenizer, args.suffix)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
 
@@ -105,10 +106,14 @@ def train(args, data_processor, model, tokenizer, role):
             augmented_data = data_processor.generate_augmented_data(args, model, tokenizer, batch)
 
             # print('=' * 20)
-            # for line in tokenizer.batch_decode(batch["input_ids"], skip_special_tokens=True, clean_up_tokenization_spaces=False):
+            # for line in tokenizer.batch_decode(
+            #         batch["input_ids"], skip_special_tokens=True, clean_up_tokenization_spaces=False
+            # ):
             #     print(line)
             # print('=' * 20)
-            # for line in tokenizer.batch_decode(augmented_data["input_ids"], skip_special_tokens=True, clean_up_tokenization_spaces=False):
+            # for line in tokenizer.batch_decode(
+            #         augmented_data["input_ids"], skip_special_tokens=True, clean_up_tokenization_spaces=False
+            # ):
             #     print(line)
 
             model.train()
@@ -131,8 +136,13 @@ def train(args, data_processor, model, tokenizer, role):
             loss = raw_loss + augmented_loss
 
             if args.n_gpu > 1:
-                loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
+                # mean() to average on multi-gpu parallel (not distributed) training
+                raw_loss = raw_loss.mean()
+                augmented_loss = augmented_loss.mean()
+                loss = loss.mean()
             if args.gradient_accumulation_steps > 1:
+                raw_loss = raw_loss / args.gradient_accumulation_steps
+                augmented_loss = augmented_loss / args.gradient_accumulation_steps
                 loss = loss / args.gradient_accumulation_steps
 
             if args.fp16:
@@ -144,7 +154,9 @@ def train(args, data_processor, model, tokenizer, role):
             # TODO: update transition matrix P
 
             tr_loss += loss.item()
-            description = "Global step: {:>6d}, Loss: {:>.4f}".format(global_step, loss.item())
+            description = "Global step: {:>6d}, Loss: {:>.4f} vs {:>.4f}".format(
+                global_step, raw_loss.item(), augmented_loss.item()
+            )
             epoch_iterator.set_description(description)
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
@@ -210,50 +222,51 @@ def train(args, data_processor, model, tokenizer, role):
 
 
 def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
-    # if prefix == "":
-    #     output_dir = args.output_dir
-    # else:
-    #     output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(prefix))
-    # if not os.path.exists(output_dir) and args.local_rank in [-1, 0]:
-    #     os.makedirs(output_dir)
-    #
-    # args.eval_batch_size = args.per_device_eval_batch_size * max(1, args.n_gpu)
-    # examples, dataset = data_processor.load_and_cache_data(role, tokenizer, args.ratio)
-    # # Note that DistributedSampler samples randomly
-    # eval_sampler = SequentialSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
-    # eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
-    #
-    # # Eval!
-    # logger.info("***** Running evaluation {} *****".format(prefix))
-    # logger.info("Num examples = %d", len(dataset))
-    # logger.info("Batch size = %d", args.eval_batch_size)
-    #
-    # eval_outputs = []
-    # for batch in tqdm(eval_dataloader, desc="Evaluating"):
-    #     model.eval()
-    #     with torch.no_grad():
-    #         inputs = {
-    #             "input_ids": batch[0].to(args.device),
-    #             "attention_mask": batch[1].to(args.device),
-    #         }
-    #
-    #         outputs = model.generate(**inputs, max_length=args.max_tgt_length)
-    #         eval_outputs.extend(generate_outputs(outputs.detach().cpu().tolist(), tokenizer))
-    #
-    # eval_outputs = refine_outputs(examples, eval_outputs)
-    # eval_outputs_file = os.path.join(output_dir, "{}_outputs.json".format(role))
-    # save_json_lines(eval_outputs, eval_outputs_file)
-    #
-    # eval_results = {'F1': 1.0}
-    # eval_results_file = os.path.join(output_dir, "{}_results.txt".format(role))
-    # with open(eval_results_file, "w") as writer:
-    #     logger.info("***** Eval results {} *****".format(prefix))
-    #     for key in eval_results.keys():
-    #         logger.info("%s = %s", key, str(eval_results[key]))
-    #         writer.write("%s = %s\n" % (key, str(eval_results[key])))
-    #
-    # return eval_results
-    return {'F1': 1.0}
+    if prefix == "":
+        output_dir = args.output_dir
+    else:
+        output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(prefix))
+    if not os.path.exists(output_dir) and args.local_rank in [-1, 0]:
+        os.makedirs(output_dir)
+
+    args.eval_batch_size = args.per_device_eval_batch_size * max(1, args.n_gpu)
+    examples, eval_dataset = data_processor.load_and_cache_data(role, tokenizer, args.suffix)
+    # Note that DistributedSampler samples randomly
+    eval_sampler = SequentialSampler(eval_dataset) if args.local_rank == -1 else DistributedSampler(eval_dataset)
+    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
+
+    # Eval!
+    logger.info("***** Running evaluation {} *****".format(prefix))
+    logger.info("Num examples = %d", len(eval_dataset))
+    logger.info("Batch size = %d", args.eval_batch_size)
+
+    eval_outputs = []
+    for batch in tqdm(eval_dataloader, desc="Evaluating"):
+        model.eval()
+        with torch.no_grad():
+            augmented_data = data_processor.generate_augmented_data(args, model, tokenizer, batch)
+
+            inputs = {
+                "input_ids": augmented_data["input_ids"].to(args.device),
+                "attention_mask": augmented_data["attention_mask"].to(args.device),
+            }
+
+            outputs = model.generate(**inputs, max_length=args.max_tgt_length)
+            eval_outputs.extend(generate_outputs(outputs.detach().cpu().tolist(), tokenizer))
+
+    eval_outputs = refine_outputs(examples, eval_outputs)
+    eval_outputs_file = os.path.join(output_dir, "{}_outputs.json".format(role))
+    save_json_lines(eval_outputs, eval_outputs_file)
+
+    eval_results = {'F1': 1.0}
+    eval_results_file = os.path.join(output_dir, "{}_results.txt".format(role))
+    with open(eval_results_file, "w") as writer:
+        logger.info("***** Eval results {} *****".format(prefix))
+        for key in eval_results.keys():
+            logger.info("%s = %s", key, str(eval_results[key]))
+            writer.write("%s = %s\n" % (key, str(eval_results[key])))
+
+    return eval_results
 
 
 def main():
@@ -317,7 +330,7 @@ def main():
     )
 
     # Other parameters
-    parser.add_argument("--ratio", default=None, type=str, help="")
+    parser.add_argument("--suffix", default=None, type=str, help="")
     parser.add_argument(
         "--config_name", default="", type=str, help="Pretrained config name or path if not the same as model_name"
     )

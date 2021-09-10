@@ -164,3 +164,10 @@ def refine_outputs(examples, outputs):
     for example, generated in zip(examples, outputs):
         refined_outputs.append({'source': example.source, 'target': example.target, 'generated': generated})
     return refined_outputs
+
+
+def refine_outputs_v2(examples, outputs):
+    refined_outputs = []
+    for example, generated in zip(examples, outputs):
+        refined_outputs.append({'source': example['source'], 'target': example['target'], 'generated': generated})
+    return refined_outputs

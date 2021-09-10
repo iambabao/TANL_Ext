@@ -1844,7 +1844,8 @@ class CONLL05SRL(NERDataset):
                 line = line.split('|||')
                 assert len(line) == 2
                 sentence, tag = line[0].strip(), line[1].strip()
-                sentence = sentence.split()[1:]
+                sentence = sentence.split()
+                # sentence = sentence.split()[1:]
                 tag = tag.split()
                 arguments, predicate = self.convert_bio_to_entities(tag)
                 example = InputExample(

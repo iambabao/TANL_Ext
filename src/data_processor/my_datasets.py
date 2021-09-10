@@ -3,13 +3,10 @@ import os
 import json
 import torch
 import numpy as np
-from typing import Dict, List
 from collections import Counter
-from transformers import PreTrainedTokenizer
 
-from src.data_processor.input_example import EntityType, RelationType, Entity, Relation, InputExample
 from src.data_processor.base_dataset import BaseDataset
-from src.utils.arguments import DataTrainingArguments
+from src.data_processor.input_example import EntityType, RelationType, Entity, Relation, InputExample
 from src.utils.tanl_utils import get_precision_recall_f1
 
 logger = logging.getLogger(__name__)
@@ -22,20 +19,10 @@ def register_dataset(dataset_class):
 
 
 def load_dataset(
-        dataset_name: str,
-        data_args,
-        tokenizer: PreTrainedTokenizer,
-        split: str,
-        max_input_length: int,
-        max_output_length: int,
-        train_subset: float = 1,
-        seed: int = None,
-        shuffle: bool = True,
-        is_eval: bool = False
+        dataset_name, data_args, tokenizer, split,
+        max_input_length, max_output_length,
+        train_subset=1.0, seed=None, shuffle=True, is_eval=False,
 ):
-    """
-    Load a registered dataset.
-    """
     return DATASETS[dataset_name](
         tokenizer=tokenizer,
         max_input_length=max_input_length,
@@ -50,100 +37,91 @@ def load_dataset(
     )
 
 
-class JointERDataset(BaseDataset):
-    """
-    Base class for datasets of joint entity and relation extraction.
-    """
+class MyBaseDataset(BaseDataset):
     entity_types = None
     relation_types = None
     natural_entity_types = None
     natural_relation_types = None
 
+    default_input_format = 'plain'
     default_output_format = 'joint_er'
 
-    def load_cached_data(self, cached_features_file):
-        d = torch.load(cached_features_file)
-        self.entity_types, self.relation_types, self.examples, self.features = \
-            d['entity_types'], d['relation_types'], d['examples'], d['features']
+    def load_cached_data(self, cached_file):
+        d = torch.load(cached_file)
+        self.entity_types = d['entity_types']
+        self.relation_types = d['relation_types']
+        self.examples = d['examples']
+        self.features = d['features']
 
-    def save_data(self, cached_features_file):
+    def save_data(self, cached_file):
         torch.save({
             'entity_types': self.entity_types,
             'relation_types': self.relation_types,
             'examples': self.examples,
             'features': self.features,
-        }, cached_features_file)
+        }, cached_file)
 
     def load_schema(self):
-        """
-        Load entity and relation types.
-
-        This is the default implementation which uses the dictionaries natural_entity_types and natural_relation_types.
-        """
         if self.natural_entity_types is not None:
-            self.entity_types = {short: EntityType(
-                short=short,
-                natural=natural,
-            ) for short, natural in self.natural_entity_types.items()}
+            self.entity_types = {
+                short: EntityType(short=short, natural=natural)
+                for short, natural in self.natural_entity_types.items()
+            }
 
         if self.natural_relation_types is not None:
-            self.relation_types = {short: RelationType(
-                short=short,
-                natural=natural,
-            ) for short, natural in self.natural_relation_types.items()}
+            self.relation_types = {
+                short: RelationType(short=short, natural=natural)
+                for short, natural in self.natural_relation_types.items()
+            }
 
-    def load_data_single_split(self, split: str, seed: int = None) -> List[InputExample]:
+    def load_data_single_split(self, split, seed=None):
         examples = []
-        file_path = os.path.join(self.data_dir(), f'data_{split}.json')
+        filename = os.path.join(self.data_dir(), 'data_{}.json'.format(split))
 
-        with open(file_path, 'r') as f:
-            data_lines = f.readlines()
-            logger.info(f"Loaded {len(data_lines)} sentences for split {split} of {self.name}")
+        with open(filename, 'r', encoding='utf-8') as fp:
+            dataset = [json.loads(line) for line in fp]
+            logger.info('Loading {} samples from split {} of {}'.format(len(dataset), split, self.name))
 
-            for i, line in enumerate(data_lines):
-                x = json.loads(line)
+            for i, entry in enumerate(dataset):
+                tokens = entry['tokens']
+
                 entities = [
-                    Entity(id=j, type=self.entity_types[y['type']], start=y['start'], end=y['end'])
-                    for j, y in enumerate(x['entities'])
+                    Entity(
+                        id=j, type=self.entity_types[ent['type']], start=ent['start'], end=ent['end']
+                    )
+                    for j, ent in enumerate(entry['entities'])
                 ]
 
                 relations = [
                     Relation(
-                        type=self.relation_types[y['type']], head=entities[y['head']], tail=entities[y['tail']]
+                        type=self.relation_types[rel['type']], head=entities[rel['head']], tail=entities[rel['tail']]
                     )
-                    for y in x['relations']
+                    for rel in entry['relations']
                 ]
 
-                tokens = x['tokens']
-
-                example = InputExample(
-                    id=f'{split}-{i}',
+                examples.append(InputExample(
+                    id='{}-{}'.format(split, i),
                     tokens=tokens,
                     entities=entities,
                     relations=relations,
-                )
-
-                examples.append(example)
+                ))
 
         return examples
 
-    def evaluate_example(self, example: InputExample, output_sentence: str, model=None, tokenizer=None) -> Counter:
-        """
-        Evaluate an output sentence on a single example of this dataset.
-        """
+    def evaluate_example(self, example, output_sentence, model=None, tokenizer=None):
         # extract entities and relations from output sentence
-        res = self.output_format.run_inference(
+        results = self.output_format.run_inference(
             example,
             output_sentence,
             entity_types=self.entity_types,
             relation_types=self.relation_types,
         )
-        predicted_entities, predicted_relations = res[:2]
-        if len(res) == 6:
+        predicted_entities, predicted_relations = results[:2]
+        if len(results) == 6:
             # the output format provides information about errors
-            wrong_reconstruction, label_error, entity_error, format_error = res[2:]
+            wrong_reconstruction, label_error, entity_error, format_error = results[2:]
         else:
-            # in case the output format does not provide information about errors
+            # the output format does not provide information about errors
             wrong_reconstruction = label_error = entity_error = format_error = False
 
         predicted_entities_no_type = set([entity[1:] for entity in predicted_entities])
@@ -170,7 +148,7 @@ class JointERDataset(BaseDataset):
         assert len(correct_relations) <= len(predicted_relations)
         assert len(correct_relations) <= len(gt_relations)
 
-        res = Counter({
+        results = Counter({
             'num_sentences': 1,
             'wrong_reconstructions': 1 if wrong_reconstruction else 0,
             'label_error': 1 if label_error else 0,
@@ -193,26 +171,22 @@ class JointERDataset(BaseDataset):
                 predicted = set(entity for entity in predicted_entities if entity[0] == entity_type.natural)
                 gt = set(entity for entity in gt_entities if entity[0] == entity_type.natural)
                 correct = predicted & gt
-                res['predicted_entities', entity_type.natural] = len(predicted)
-                res['gt_entities', entity_type.natural] = len(gt)
-                res['correct_entities', entity_type.natural] = len(correct)
+                results['predicted_entities', entity_type.natural] = len(predicted)
+                results['gt_entities', entity_type.natural] = len(gt)
+                results['correct_entities', entity_type.natural] = len(correct)
 
         if self.relation_types is not None:
             for relation_type in self.relation_types.values():
                 predicted = set(relation for relation in predicted_relations if relation[0] == relation_type.natural)
                 gt = set(relation for relation in gt_relations if relation[0] == relation_type.natural)
                 correct = predicted & gt
-                res['predicted_relations', relation_type.natural] = len(predicted)
-                res['gt_relations', relation_type.natural] = len(gt)
-                res['correct_relations', relation_type.natural] = len(correct)
+                results['predicted_relations', relation_type.natural] = len(predicted)
+                results['gt_relations', relation_type.natural] = len(gt)
+                results['correct_relations', relation_type.natural] = len(correct)
 
-        return res
+        return results
 
-    def evaluate_dataset(self, data_args: DataTrainingArguments, model, device, batch_size: int, macro: bool = False) \
-            -> Dict[str, float]:
-        """
-        Evaluate model on this dataset.
-        """
+    def evaluate_dataset(self, data_args, model, device, batch_size, macro=False):
         results = Counter()
 
         for example, output_sentence in self.generate_output_sentences(data_args, model, device, batch_size):
@@ -241,7 +215,6 @@ class JointERDataset(BaseDataset):
         entity_f1_by_type = []
 
         if macro:
-            # compute also entity macro scores
             for entity_type in self.entity_types.values():
                 precision, recall, f1 = get_precision_recall_f1(
                     num_correct=results['correct_entities', entity_type.natural],
@@ -258,7 +231,7 @@ class JointERDataset(BaseDataset):
             num_gt=results['gt_relations'],
         )
 
-        res = {
+        metrics = {
             'wrong_reconstruction': results['wrong_reconstructions'] / results['num_sentences'],
             'label_error': results['label_error'] / results['num_sentences'],
             'entity_error': results['entity_error'] / results['num_sentences'],
@@ -275,17 +248,88 @@ class JointERDataset(BaseDataset):
         }
 
         if macro:
-            res.update({
+            metrics.update({
                 'entity_macro_precision': np.mean(np.array(entity_precision_by_type)),
                 'entity_macro_recall': np.mean(np.array(entity_recall_by_type)),
                 'entity_macro_f1': np.mean(np.array(entity_f1_by_type)),
             })
 
-        return res
+        return metrics
 
 
+# NER
 @register_dataset
-class Conll04Dataset(JointERDataset):
+class CoNLL03Dataset(MyBaseDataset):
+    name = 'conll03'
+
+    natural_entity_types = {
+        'LOC': 'location',
+        'MISC': 'miscellaneous',
+        'ORG': 'organization',
+        'PER': 'person',
+    }
+
+
+# NER
+@register_dataset
+class OntoNotesDataset(MyBaseDataset):
+    name = 'ontonotes'
+
+    natural_entity_types = {
+        'CARDINAL': 'cardinal',
+        'DATE': 'date',
+        'EVENT': 'event',
+        'FAC': 'facility',
+        'GPE': 'country city state',
+        'LANGUAGE': 'language',
+        'LAW': 'law',
+        'LOC': 'location',
+        'MONEY': 'monetary',
+        'NORP': 'nationality religious political group',
+        'ORDINAL': 'ordinal',
+        'ORG': 'organization',
+        'PERCENT': 'percent',
+        'PERSON': 'person',
+        'PRODUCT': 'product',
+        'QUANTITY': 'quantity',
+        'TIME': 'time',
+        'WORK_OF_ART': 'work_of_art',
+    }
+
+
+# NER
+@register_dataset
+class GENIADataset(MyBaseDataset):
+    name = 'genia'
+
+    natural_entity_types = {
+        'G#DNA': 'DNA',
+        'G#RNA': 'RNA',
+        'G#cell_line': 'cell line',
+        'G#cell_type': 'cell type',
+        'G#protein': 'protein',
+    }
+
+
+# NER
+@register_dataset
+class ACE2005NERDataset(MyBaseDataset):
+    name = 'ace2005_ner'
+
+    natural_entity_types = {
+        'PER': 'person',
+        'LOC': 'location',
+        'ORG': 'organization',
+        'VEH': 'vehicle',
+        'GPE': 'geographical entity',
+        'WEA': 'weapon',
+        'FAC': 'facility',
+    }
+
+
+# Joint entity relation extraction
+@register_dataset
+class CoNLL04Dataset(MyBaseDataset):
     name = 'conll04'
 
     natural_entity_types = {
@@ -300,5 +344,194 @@ class Conll04Dataset(JointERDataset):
         'Kill': 'kills',
         'OrgBased_In': 'organization based in',
         'Live_In': 'lives in',
-        'Located_In': 'located in'
+        'Located_In': 'located in',
     }
+
+
+# Joint entity relation extraction
+@register_dataset
+class NYTDataset(MyBaseDataset):
+    name = 'nyt'
+
+    natural_entity_types = {
+        'PERSON': 'person',
+        'LOCATION': 'location',
+        'ORGANIZATION': 'organization',
+    }
+
+    natural_relation_types = {
+        '/people/person/religion': 'religion',
+        '/business/company/founders': 'founders',
+        '/people/person/place_lived': 'place lived',
+        '/location/country/administrative_divisions': 'administrative divisions',
+        '/business/person/company': 'company',
+        '/business/company/place_founded': 'place founded',
+        '/business/company_shareholder/major_shareholder_of': 'major shareholder of',
+        '/business/company/advisors': 'advisors',
+        '/people/deceased_person/place_of_death': 'place of death',
+        '/people/person/nationality': 'nationality',
+        '/location/administrative_division/country': 'country',
+        '/people/person/profession': 'profession',
+        '/sports/sports_team_location/teams': 'teams',
+        '/location/location/contains': 'contains',
+        '/location/neighborhood/neighborhood_of': 'neighborhood of',
+        '/location/country/capital': 'capital',
+        '/business/company/major_shareholders': 'major shareholders',
+        '/people/ethnicity/geographic_distribution': 'geographic distribution',
+        '/people/person/ethnicity': 'ethnicity',
+        '/sports/sports_team/location': 'location',
+        '/people/ethnicity/people': 'people',
+        '/people/person/place_of_birth': 'place of birth',
+        '/business/company/industry': 'industry',
+        '/people/person/children': 'children',
+    }
+
+
+# Joint entity relation extraction
+@register_dataset
+class ADEDataset(MyBaseDataset):
+    name = 'ade'
+
+    natural_entity_types = {
+        'Adverse-Effect': 'disease',
+        'Drug': 'drug',
+    }
+
+    natural_relation_types = {
+        'Adverse-Effect': 'effect',
+    }
+
+
+# Joint entity relation extraction
+@register_dataset
+class ACE2005REDataset(MyBaseDataset):
+    name = 'ace2005_joint_er'
+
+    natural_entity_types = {
+        'PER': 'person',
+        'LOC': 'location',
+        'ORG': 'organization',
+        'VEH': 'vehicle',
+        'GPE': 'geographical entity',
+        'WEA': 'weapon',
+        'FAC': 'facility',
+    }
+
+    natural_relation_types = {
+        'PHYS': 'located in',
+        'ART': 'artifact',
+        'ORG-AFF': 'employer',
+        'GEN-AFF': 'affiliation',
+        'PER-SOC': 'social',
+        'PART-WHOLE': 'part of',
+    }
+
+
+# Relation classification
+@register_dataset
+class TacRedDataset(MyBaseDataset):
+    name = 'tacred'
+
+    entity_types = {}
+    relation_types = {}
+
+    default_input_format = 'stage_one'
+
+    def load_schema(self):
+        filename = os.path.join(self.data_dir(), 'schema_entity.txt')
+        with open(filename, 'r', encoding='utf-8') as fp:
+            for short in fp:
+                short = short.strip()
+                natural = short.lower()
+                natural = natural.replace('_', ' ')
+                self.entity_types[short] = EntityType(short=short, natural=natural)
+
+        filename = os.path.join(self.data_dir(), 'schema_relation.txt')
+        with open(filename, 'r', encoding='utf-8') as fp:
+            for short in fp:
+                short = short.strip()
+                natural = short.lower().split(':')[-1]
+                natural = natural.replace('_', ' ')
+                natural = natural.replace('/', ' ')
+                natural = natural.replace('stateorprovince', 'state or province')
+                self.relation_types[short] = RelationType(short=short, natural=natural)
+
+
+# SRL
+@register_dataset
+class CoNLL05SRL(MyBaseDataset):
+    name = 'conll05_srl'
+
+    entity_types = {}
+    relation_types = {}
+
+    default_input_format = 'stage_one'
+
+    def load_schema(self):
+        filename = os.path.join(self.data_dir(), 'schema_entity.txt')
+        with open(filename, 'r', encoding='utf-8') as fp:
+            for short in fp:
+                short = short.strip()
+                natural = short.lower()
+                self.entity_types[short] = EntityType(short=short, natural=natural)
+
+        filename = os.path.join(self.data_dir(), 'schema_relation.txt')
+        with open(filename, 'r', encoding='utf-8') as fp:
+            for short in fp:
+                short = short.strip()
+                natural = short.lower()
+                self.relation_types[short] = RelationType(short=short, natural=natural)
+
+
+# SRL
+@register_dataset
+class CoNLL12SRL(MyBaseDataset):
+    name = 'conll12_srl'
+
+    entity_types = {}
+    relation_types = {}
+
+    default_input_format = 'stage_one'
+
+    def load_schema(self):
+        filename = os.path.join(self.data_dir(), 'schema_entity.txt')
+        with open(filename, 'r', encoding='utf-8') as fp:
+            for short in fp:
+                short = short.strip()
+                natural = short.lower()
+                self.entity_types[short] = EntityType(short=short, natural=natural)
+
+        filename = os.path.join(self.data_dir(), 'schema_relation.txt')
+        with open(filename, 'r', encoding='utf-8') as fp:
+            for short in fp:
+                short = short.strip()
+                natural = short.lower()
+                self.relation_types[short] = RelationType(short=short, natural=natural)
+
+
+# Event
+@register_dataset
+class ACE2005Event(MyBaseDataset):
+    name = 'ace2005_event'
+
+    entity_types = {}
+    relation_types = {}
+
+    default_input_format = 'stage_one'
+
+    def load_schema(self):
+        filename = os.path.join(self.data_dir(), 'schema_entity.txt')
+        with open(filename, 'r', encoding='utf-8') as fp:
+            for short in fp:
+                short = short.strip()
+                natural = short.lower().split(':')[-1]
+                natural = natural.replace('-', ' ')
+                self.entity_types[short] = EntityType(short=short, natural=natural)
+
+        filename = os.path.join(self.data_dir(), 'schema_relation.txt')
+        with open(filename, 'r', encoding='utf-8') as fp:
+            for short in fp:
+                short = short.strip()
+                natural = short.lower()
+                natural = natural.replace('-', ' ')
+                self.relation_types[short] = RelationType(short=short, natural=natural)

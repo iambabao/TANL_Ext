@@ -104,3 +104,20 @@ class SRLInput(BaseInputFormat):
         words.insert(end, self.END_ENTITY_TOKEN)
         words.insert(start, self.BEGIN_ENTITY_TOKEN)
         return ' '.join(words)
+
+
+@register_input_format
+class StageOneInputFormat(BaseInputFormat):
+    """
+    Input format with given entities.
+    """
+    name = 'stage_one'
+
+    def _format_input(self, example: InputExample) -> str:
+        augmentations = [([(entity.type.natural,)], entity.start, entity.end) for entity in example.entities]
+
+        return augment_sentence(
+            example.tokens, augmentations,
+            self.BEGIN_ENTITY_TOKEN, self.SEPARATOR_TOKEN,
+            self.RELATION_SEPARATOR_TOKEN, self.END_ENTITY_TOKEN
+        )

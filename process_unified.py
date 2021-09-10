@@ -948,21 +948,37 @@ def process_tacred():
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
+def generate_schema(root_dir):
+    for task_name in os.listdir(root_dir):
+        task_dir = os.path.join(root_dir, task_name)
+        if not os.path.isdir(task_dir): continue
+        entity_schema = set()
+        relation_schema = set()
+        for role in ['train', 'valid', 'test']:
+            for entry in read_json_lines(os.path.join(task_dir, 'data_{}.json'.format(role))):
+                entity_schema.update(_['type'] for _ in entry['entities'])
+                relation_schema.update(_['type'] for _ in entry['relations'])
+        save_file(entity_schema, os.path.join(task_dir, 'schema_entity.txt'))
+        save_file(relation_schema, os.path.join(task_dir, 'schema_relation.txt'))
+
+
 def main():
     init_logger(logging.INFO)
 
-    process_ace2005_joint_er()
-    process_ace2005_ner()
-    process_ace2005_event()
-    process_ade()
-    process_conll03()
-    process_conll04()
-    process_conll05_srl()
-    process_conll12_srl()
-    process_genia()
-    process_nyt()
-    process_ontonotes()
-    process_tacred()
+    # process_ace2005_joint_er()
+    # process_ace2005_ner()
+    # process_ace2005_event()
+    # process_ade()
+    # process_conll03()
+    # process_conll04()
+    # process_conll05_srl()
+    # process_conll12_srl()
+    # process_genia()
+    # process_nyt()
+    # process_ontonotes()
+    # process_tacred()
+
+    generate_schema('data/formatted_unified')
 
 
 if __name__ == '__main__':

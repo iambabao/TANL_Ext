@@ -11,12 +11,14 @@
 import logging
 import os
 import torch
+import random
 import numpy as np
 from tqdm import tqdm
 
 from src.utils.my_utils import read_json_lines
 
 logger = logging.getLogger(__name__)
+task_list = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
 task2id = {'ace2005_joint_er': 0, 'ade': 1, 'conll04': 2, 'nyt': 3}
 id2task = {0: 'ace2005_joint_er', 1: 'ade', 2: 'conll04', 3: 'nyt'}
 
@@ -120,7 +122,8 @@ class DataProcessorTop:
 
     def generate_augmented_data(self, args, model, tokenizer, batch):
         raw_task_name = batch["task_name"]
-        new_task_name = batch["task_name"]  # TODO: sample new tasks according to transfer matrix
+        # TODO: sample new tasks according to transfer matrix
+        new_task_name = [random.choice(task_list) for _ in batch['task_name']]
 
         source = ["{} : {}".format(task_name, source) for task_name, source in zip(new_task_name, batch["source"])]
         encoded = tokenizer.batch_encode_plus(
