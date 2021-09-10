@@ -10,11 +10,10 @@
 
 import argparse
 import logging
-from tqdm import tqdm
 from transformers import AutoTokenizer
 
 from src.data_processor import load_my_dataset as load_dataset
-from src.utils.my_utils import init_logger, save_json_lines
+from src.utils.my_utils import init_logger
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +75,13 @@ def main():
         is_eval=True,
     )
 
-    formatted_data = []
-    for source, target in tqdm(zip(dataset.input_sentences, dataset.output_sentences)):
-        formatted_data.append({"source": source, "target": target})
-    save_json_lines(formatted_data, 'temp/temp.json')
+    generated_outputs = dataset.output_sentences
+    assert len(dataset.examples) == len(generated_outputs)
+
+    final_results = dataset.evaluate_generated_outputs(generated_outputs)
+
+    for key, value in final_results.items():
+        logger.info("{}: {}".format(key, value))
 
 
 if __name__ == "__main__":

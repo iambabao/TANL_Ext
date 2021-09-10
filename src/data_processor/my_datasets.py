@@ -186,6 +186,46 @@ class MyBaseDataset(BaseDataset):
 
         return results
 
+    def evaluate_generated_outputs(self, generated_outputs):
+        results = Counter()
+        for example, output in zip(self.examples, generated_outputs):
+            cur_results = self.evaluate_example(example=example, output_sentence=output)
+            results += cur_results
+
+        entity_precision, entity_recall, entity_f1 = get_precision_recall_f1(
+            num_correct=results['correct_entities'],
+            num_predicted=results['predicted_entities'],
+            num_gt=results['gt_entities'],
+        )
+        entity_precision_no_type, entity_recall_no_type, entity_f1_no_type = get_precision_recall_f1(
+            num_correct=results['correct_entities_no_type'],
+            num_predicted=results['predicted_entities_no_type'],
+            num_gt=results['gt_entities_no_type'],
+        )
+        relation_precision, relation_recall, relation_f1 = get_precision_recall_f1(
+            num_correct=results['correct_relations'],
+            num_predicted=results['predicted_relations'],
+            num_gt=results['gt_relations'],
+        )
+
+        final_results = {
+            'wrong_reconstruction': results['wrong_reconstructions'] / results['num_sentences'],
+            'label_error': results['label_error'] / results['num_sentences'],
+            'entity_error': results['entity_error'] / results['num_sentences'],
+            'format_error': results['format_error'] / results['num_sentences'],
+            'entity_precision': entity_precision,
+            'entity_recall': entity_recall,
+            'entity_f1': entity_f1,
+            'relation_precision': relation_precision,
+            'relation_recall': relation_recall,
+            'relation_f1': relation_f1,
+            'entity_precision_no_type': entity_precision_no_type,
+            'entity_recall_no_type': entity_recall_no_type,
+            'entity_f1_no_type': entity_f1_no_type,
+        }
+
+        return final_results
+
     def evaluate_dataset(self, data_args, model, device, batch_size, macro=False):
         results = Counter()
 
