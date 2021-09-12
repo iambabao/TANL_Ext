@@ -14,6 +14,7 @@ import os
 import glob
 import json
 import torch
+import torch.distributed as dist
 from tqdm import tqdm
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
@@ -89,7 +90,7 @@ def train(args, data_processor, model, tokenizer, role):
         "Total train batch size (w. parallel, distributed & accumulation) = %d",
         args.train_batch_size
         * args.gradient_accumulation_steps
-        * (torch.distributed.get_world_size() if args.local_rank != -1 else 1),
+        * (dist.get_world_size() if args.local_rank != -1 else 1),
     )
     logger.info("Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logger.info("Total optimization steps = %d", t_total)
@@ -440,7 +441,7 @@ def main():
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         torch.cuda.set_device(args.local_rank)
         device = torch.device("cuda", args.local_rank)
-        torch.distributed.init_process_group(backend="nccl")
+        dist.init_process_group(backend="nccl")
         args.n_gpu = 1
     args.device = device
 
@@ -528,8 +529,10 @@ def main():
 
         for checkpoint in checkpoints:
             global_step = checkpoint.split("-")[-1] if len(checkpoints) > 1 else ""
-            try: int(global_step)
-            except ValueError: global_step = ""
+            try:
+                int(global_step)
+            except ValueError:
+                global_step = ""
 
             # Reload the model
             model = AutoModelForSeq2SeqLM.from_pretrained(checkpoint)
