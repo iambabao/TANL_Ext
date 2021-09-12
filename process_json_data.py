@@ -17,10 +17,174 @@ from src.utils.my_utils import init_logger, read_file, save_file, read_json, sav
 logger = logging.getLogger(__name__)
 
 
-def process_ace2005_joint_er():
-    task_name = 'ace2005_joint_er'
+def process_ace2005_event():
+    task_name = 'ace2005_event'
     logger.info('Processing: {}'.format(task_name))
-    output_dir = 'data/formatted_unified/{}'.format(task_name)
+    output_dir = 'data/formatted_json/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/train.json')):
+        tokens = entry['words']
+        entities = []
+        relations = []
+        for event in entry['golden-event-mentions']:
+            trigger = {
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger',
+            }
+            if trigger in entities:
+                trigger_index = entities.index(trigger)
+            else:
+                trigger_index = len(entities)
+                entities.append(trigger)
+            for arg_info in event['arguments']:
+                arg = {
+                    'text': arg_info['text'],
+                    'start': arg_info['start'],
+                    'end': arg_info['end'],
+                    'type': arg_info['entity-type'],
+                }
+                if arg in entities:
+                    arg_index = entities.index(arg)
+                else:
+                    arg_index = len(entities)
+                    entities.append(arg)
+                # relations.append({'head': trigger_index, 'tail': arg_index, 'type': arg_info['role']})
+                relations.append({'head': arg_index, 'tail': trigger_index, 'type': arg_info['role']})
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/dev.json')):
+        tokens = entry['words']
+        entities = []
+        relations = []
+        for event in entry['golden-event-mentions']:
+            trigger = {
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger',
+            }
+            if trigger in entities:
+                trigger_index = entities.index(trigger)
+            else:
+                trigger_index = len(entities)
+                entities.append(trigger)
+            for arg_info in event['arguments']:
+                arg = {
+                    'text': arg_info['text'],
+                    'start': arg_info['start'],
+                    'end': arg_info['end'],
+                    'type': arg_info['entity-type'],
+                }
+                if arg in entities:
+                    arg_index = entities.index(arg)
+                else:
+                    arg_index = len(entities)
+                    entities.append(arg)
+                # relations.append({'head': trigger_index, 'tail': arg_index, 'type': arg_info['role']})
+                relations.append({'head': arg_index, 'tail': trigger_index, 'type': arg_info['role']})
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/test.json')):
+        tokens = entry['words']
+        entities = []
+        relations = []
+        for event in entry['golden-event-mentions']:
+            trigger = {
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger',
+            }
+            if trigger in entities:
+                trigger_index = entities.index(trigger)
+            else:
+                trigger_index = len(entities)
+                entities.append(trigger)
+            for arg_info in event['arguments']:
+                arg = {
+                    'text': arg_info['text'],
+                    'start': arg_info['start'],
+                    'end': arg_info['end'],
+                    'type': arg_info['entity-type'],
+                }
+                if arg in entities:
+                    arg_index = entities.index(arg)
+                else:
+                    arg_index = len(entities)
+                    entities.append(arg)
+                # relations.append({'head': trigger_index, 'tail': arg_index, 'type': arg_info['role']})
+                relations.append({'head': arg_index, 'tail': trigger_index, 'type': arg_info['role']})
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def process_ace2005_ner():
+    task_name = 'ace2005_ner'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/formatted_json/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005_ner/train.ner.json')):
+        tokens = entry['context'].strip().split()
+        entities = []
+        for entity_type, block in entry['label'].items():
+            for entity in block:
+                start, end = map(int, entity.split(';'))
+                entities.append({
+                    'text': ' '.join(tokens[start:end + 1]),
+                    'start': start,
+                    'end': end + 1,
+                    'type': entity_type,
+                })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005_ner/dev.ner.json')):
+        tokens = entry['context'].strip().split()
+        entities = []
+        for entity_type, block in entry['label'].items():
+            for entity in block:
+                start, end = map(int, entity.split(';'))
+                entities.append({
+                    'text': ' '.join(tokens[start:end + 1]),
+                    'start': start,
+                    'end': end + 1,
+                    'type': entity_type,
+                })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005_ner/test.ner.json')):
+        tokens = entry['context'].strip().split()
+        entities = []
+        for entity_type, block in entry['label'].items():
+            for entity in block:
+                start, end = map(int, entity.split(';'))
+                entities.append({
+                    'text': ' '.join(tokens[start:end + 1]),
+                    'start': start,
+                    'end': end + 1,
+                    'type': entity_type,
+                })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def process_ace2005_re():
+    task_name = 'ace2005_re'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/formatted_json/{}'.format(task_name)
     os.makedirs(output_dir, exist_ok=True)
 
     outputs = []
@@ -123,165 +287,10 @@ def process_ace2005_joint_er():
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
-def process_ace2005_ner():
-    task_name = 'ace2005_ner'
+def process_ade_re():
+    task_name = 'ade_re'
     logger.info('Processing: {}'.format(task_name))
-    output_dir = 'data/formatted_unified/{}'.format(task_name)
-    os.makedirs(output_dir, exist_ok=True)
-
-    outputs = []
-    for entry in tqdm(read_json('data/raw/ace2005_ner/train.ner.json')):
-        tokens = entry['context'].strip().split()
-        entities = []
-        for entity_type, block in entry['label'].items():
-            for entity in block:
-                start, end = map(int, entity.split(';'))
-                entities.append({
-                    'text': ' '.join(tokens[start:end + 1]),
-                    'start': start,
-                    'end': end + 1,
-                    'type': entity_type,
-                })
-        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
-    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
-
-    outputs = []
-    for entry in tqdm(read_json('data/raw/ace2005_ner/dev.ner.json')):
-        tokens = entry['context'].strip().split()
-        entities = []
-        for entity_type, block in entry['label'].items():
-            for entity in block:
-                start, end = map(int, entity.split(';'))
-                entities.append({
-                    'text': ' '.join(tokens[start:end + 1]),
-                    'start': start,
-                    'end': end + 1,
-                    'type': entity_type,
-                })
-        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
-    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
-
-    outputs = []
-    for entry in tqdm(read_json('data/raw/ace2005_ner/test.ner.json')):
-        tokens = entry['context'].strip().split()
-        entities = []
-        for entity_type, block in entry['label'].items():
-            for entity in block:
-                start, end = map(int, entity.split(';'))
-                entities.append({
-                    'text': ' '.join(tokens[start:end + 1]),
-                    'start': start,
-                    'end': end + 1,
-                    'type': entity_type,
-                })
-        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
-    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
-
-
-def process_ace2005_event():
-    task_name = 'ace2005_event'
-    logger.info('Processing: {}'.format(task_name))
-    output_dir = 'data/formatted_unified/{}'.format(task_name)
-    os.makedirs(output_dir, exist_ok=True)
-
-    outputs = []
-    for entry in tqdm(read_json('data/raw/ace2005event/train.json')):
-        tokens = entry['words']
-        entities = []
-        for ent in entry['golden-entity-mentions']:
-            entities.append({
-                'text': ent['text'],
-                'start': ent['start'],
-                'end': ent['end'],
-                'type': ent['entity-type'],
-            })
-        relations = []
-        for event in entry['golden-event-mentions']:
-            trigger_index = len(entities)
-            entities.append({
-                'text': event['trigger']['text'],
-                'start': event['trigger']['start'],
-                'end': event['trigger']['end'],
-                'type': 'trigger',
-            })
-            for arg in event['arguments']:
-                arg_index = entities.index({
-                    'text': arg['text'],
-                    'start': arg['start'],
-                    'end': arg['end'],
-                    'type': arg['entity-type'],
-                })
-                relations.append({'head': trigger_index, 'tail': arg_index, 'type': arg['role']})
-        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
-    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
-
-    outputs = []
-    for entry in tqdm(read_json('data/raw/ace2005event/dev.json')):
-        tokens = entry['words']
-        entities = []
-        for ent in entry['golden-entity-mentions']:
-            entities.append({
-                'text': ent['text'],
-                'start': ent['start'],
-                'end': ent['end'],
-                'type': ent['entity-type'],
-            })
-        relations = []
-        for event in entry['golden-event-mentions']:
-            trigger_index = len(entities)
-            entities.append({
-                'text': event['trigger']['text'],
-                'start': event['trigger']['start'],
-                'end': event['trigger']['end'],
-                'type': 'trigger',
-            })
-            for arg in event['arguments']:
-                arg_index = entities.index({
-                    'text': arg['text'],
-                    'start': arg['start'],
-                    'end': arg['end'],
-                    'type': arg['entity-type'],
-                })
-                relations.append({'head': trigger_index, 'tail': arg_index, 'type': arg['role']})
-        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
-    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
-
-    outputs = []
-    for entry in tqdm(read_json('data/raw/ace2005event/test.json')):
-        tokens = entry['words']
-        entities = []
-        for ent in entry['golden-entity-mentions']:
-            entities.append({
-                'text': ent['text'],
-                'start': ent['start'],
-                'end': ent['end'],
-                'type': ent['entity-type'],
-            })
-        relations = []
-        for event in entry['golden-event-mentions']:
-            trigger_index = len(entities)
-            entities.append({
-                'text': event['trigger']['text'],
-                'start': event['trigger']['start'],
-                'end': event['trigger']['end'],
-                'type': 'trigger',
-            })
-            for arg in event['arguments']:
-                arg_index = entities.index({
-                    'text': arg['text'],
-                    'start': arg['start'],
-                    'end': arg['end'],
-                    'type': arg['entity-type'],
-                })
-                relations.append({'head': trigger_index, 'tail': arg_index, 'type': arg['role']})
-        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
-    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
-
-
-def process_ade():
-    task_name = 'ade'
-    logger.info('Processing: {}'.format(task_name))
-    output_dir = 'data/formatted_unified/{}'.format(task_name)
+    output_dir = 'data/formatted_json/{}'.format(task_name)
     os.makedirs(output_dir, exist_ok=True)
 
     outputs = []
@@ -328,7 +337,7 @@ def process_ade():
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
-def process_conll03():
+def process_conll03_ner():
     def _process(_tokens, _tags):
         _entities = []
         _start, _type = -1, None
@@ -363,9 +372,9 @@ def process_conll03():
             _start, _type = -1, None
         return _entities
 
-    task_name = 'conll03'
+    task_name = 'conll03_ner'
     logger.info('Processing: {}'.format(task_name))
-    output_dir = 'data/formatted_unified/{}'.format(task_name)
+    output_dir = 'data/formatted_json/{}'.format(task_name)
     os.makedirs(output_dir, exist_ok=True)
 
     outputs = []
@@ -423,10 +432,10 @@ def process_conll03():
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
-def process_conll04():
-    task_name = 'conll04'
+def process_conll04_re():
+    task_name = 'conll04_re'
     logger.info('Processing: {}'.format(task_name))
-    output_dir = 'data/formatted_unified/{}'.format(task_name)
+    output_dir = 'data/formatted_json/{}'.format(task_name)
     os.makedirs(output_dir, exist_ok=True)
 
     outputs = []
@@ -493,6 +502,7 @@ def process_conll04():
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
+# TODO: check
 def process_conll05_srl():
     def _process(_tokens, _tags):
         _entities = []
@@ -530,7 +540,7 @@ def process_conll05_srl():
 
     task_name = 'conll05_srl'
     logger.info('Processing: {}'.format(task_name))
-    output_dir = 'data/formatted_unified/{}'.format(task_name)
+    output_dir = 'data/formatted_json/{}'.format(task_name)
     os.makedirs(output_dir, exist_ok=True)
 
     outputs = []
@@ -669,14 +679,15 @@ def process_conll05_srl():
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
+# TODO: check
 def process_conll12_srl():
     pass
 
 
-def process_genia():
-    task_name = 'genia'
+def process_genia_ner():
+    task_name = 'genia_ner'
     logger.info('Processing: {}'.format(task_name))
-    output_dir = 'data/formatted_unified/{}'.format(task_name)
+    output_dir = 'data/formatted_json/{}'.format(task_name)
     os.makedirs(output_dir, exist_ok=True)
 
     outputs = []
@@ -737,10 +748,10 @@ def process_genia():
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
-def process_nyt():
-    task_name = 'nyt'
+def process_nyt_re():
+    task_name = 'nyt_re'
     logger.info('Processing: {}'.format(task_name))
-    output_dir = 'data/formatted_unified/{}'.format(task_name)
+    output_dir = 'data/formatted_json/{}'.format(task_name)
     os.makedirs(output_dir, exist_ok=True)
 
     outputs = []
@@ -813,7 +824,7 @@ def process_nyt():
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
-def process_ontonotes():
+def process_ontonotes_ner():
     def _process(_tokens, _tags):
         _entities = []
         _start, _type = -1, None
@@ -848,9 +859,9 @@ def process_ontonotes():
             _start, _type = -1, None
         return _entities
 
-    task_name = 'ontonotes'
+    task_name = 'ontonotes_ner'
     logger.info('Processing: {}'.format(task_name))
-    output_dir = 'data/formatted_unified/{}'.format(task_name)
+    output_dir = 'data/formatted_json/{}'.format(task_name)
     os.makedirs(output_dir, exist_ok=True)
 
     outputs = []
@@ -902,10 +913,10 @@ def process_ontonotes():
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
-def process_tacred():
-    task_name = 'tacred'
+def process_tacred_rc():
+    task_name = 'tacred_rc'
     logger.info('Processing: {}'.format(task_name))
-    output_dir = 'data/formatted_unified/{}'.format(task_name)
+    output_dir = 'data/formatted_json/{}'.format(task_name)
     os.makedirs(output_dir, exist_ok=True)
 
     outputs = []
@@ -965,20 +976,20 @@ def generate_schema(root_dir):
 def main():
     init_logger(logging.INFO)
 
-    # process_ace2005_joint_er()
-    # process_ace2005_ner()
     # process_ace2005_event()
-    # process_ade()
-    # process_conll03()
-    # process_conll04()
+    # process_ace2005_ner()
+    # process_ace2005_re()
+    # process_ade_re()
+    # process_conll03_ner()
+    # process_conll04_re()
     # process_conll05_srl()
     # process_conll12_srl()
-    # process_genia()
-    # process_nyt()
-    # process_ontonotes()
-    # process_tacred()
+    # process_genia_ner()
+    # process_nyt_re()
+    # process_ontonotes_ner()
+    # process_tacred_rc()
 
-    generate_schema('data/formatted_unified')
+    # generate_schema('data/formatted_json')
 
 
 if __name__ == '__main__':

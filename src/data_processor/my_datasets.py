@@ -299,8 +299,8 @@ class MyBaseDataset(BaseDataset):
 
 # NER
 @register_dataset
-class CoNLL03Dataset(MyBaseDataset):
-    name = 'conll03'
+class CoNLL03NERDataset(MyBaseDataset):
+    name = 'conll03_ner'
 
     natural_entity_types = {
         'LOC': 'location',
@@ -312,8 +312,8 @@ class CoNLL03Dataset(MyBaseDataset):
 
 # NER
 @register_dataset
-class OntoNotesDataset(MyBaseDataset):
-    name = 'ontonotes'
+class OntoNotesNERDataset(MyBaseDataset):
+    name = 'ontonotes_ner'
 
     natural_entity_types = {
         'CARDINAL': 'cardinal',
@@ -339,8 +339,8 @@ class OntoNotesDataset(MyBaseDataset):
 
 # NER
 @register_dataset
-class GENIADataset(MyBaseDataset):
-    name = 'genia'
+class GENIANERDataset(MyBaseDataset):
+    name = 'genia_ner'
 
     natural_entity_types = {
         'G#DNA': 'DNA',
@@ -369,8 +369,8 @@ class ACE2005NERDataset(MyBaseDataset):
 
 # Joint entity relation extraction
 @register_dataset
-class CoNLL04Dataset(MyBaseDataset):
-    name = 'conll04'
+class CoNLL04REDataset(MyBaseDataset):
+    name = 'conll04_re'
 
     natural_entity_types = {
         'Loc': 'location',
@@ -390,8 +390,8 @@ class CoNLL04Dataset(MyBaseDataset):
 
 # Joint entity relation extraction
 @register_dataset
-class NYTDataset(MyBaseDataset):
-    name = 'nyt'
+class NYTREDataset(MyBaseDataset):
+    name = 'nyt_re'
 
     natural_entity_types = {
         'PERSON': 'person',
@@ -429,8 +429,8 @@ class NYTDataset(MyBaseDataset):
 
 # Joint entity relation extraction
 @register_dataset
-class ADEDataset(MyBaseDataset):
-    name = 'ade'
+class ADEREDataset(MyBaseDataset):
+    name = 'ade_re'
 
     natural_entity_types = {
         'Adverse-Effect': 'disease',
@@ -445,7 +445,7 @@ class ADEDataset(MyBaseDataset):
 # Joint entity relation extraction
 @register_dataset
 class ACE2005REDataset(MyBaseDataset):
-    name = 'ace2005_joint_er'
+    name = 'ace2005_re'
 
     natural_entity_types = {
         'PER': 'person',
@@ -469,8 +469,8 @@ class ACE2005REDataset(MyBaseDataset):
 
 # Relation classification
 @register_dataset
-class TacRedDataset(MyBaseDataset):
-    name = 'tacred'
+class TacRedRCDataset(MyBaseDataset):
+    name = 'tacred_rc'
 
     entity_types = {}
     relation_types = {}
@@ -497,9 +497,35 @@ class TacRedDataset(MyBaseDataset):
                 self.relation_types[short] = RelationType(short=short, natural=natural)
 
 
+# Event
+@register_dataset
+class ACE2005EventDataset(MyBaseDataset):
+    name = 'ace2005_event'
+
+    entity_types = {}
+    relation_types = {}
+
+    def load_schema(self):
+        filename = os.path.join(self.data_dir(), 'schema_entity.txt')
+        with open(filename, 'r', encoding='utf-8') as fp:
+            for short in fp:
+                short = short.strip()
+                natural = short.lower().split(':')[-1]
+                natural = natural.replace('-', ' ')
+                self.entity_types[short] = EntityType(short=short, natural=natural)
+
+        filename = os.path.join(self.data_dir(), 'schema_relation.txt')
+        with open(filename, 'r', encoding='utf-8') as fp:
+            for short in fp:
+                short = short.strip()
+                natural = short.lower()
+                natural = natural.replace('-', ' ')
+                self.relation_types[short] = RelationType(short=short, natural=natural)
+
+
 # SRL
 @register_dataset
-class CoNLL05SRL(MyBaseDataset):
+class CoNLL05SRLDataset(MyBaseDataset):
     name = 'conll05_srl'
 
     entity_types = {}
@@ -525,7 +551,7 @@ class CoNLL05SRL(MyBaseDataset):
 
 # SRL
 @register_dataset
-class CoNLL12SRL(MyBaseDataset):
+class CoNLL12SRLDataset(MyBaseDataset):
     name = 'conll12_srl'
 
     entity_types = {}
@@ -546,32 +572,4 @@ class CoNLL12SRL(MyBaseDataset):
             for short in fp:
                 short = short.strip()
                 natural = short.lower()
-                self.relation_types[short] = RelationType(short=short, natural=natural)
-
-
-# Event
-@register_dataset
-class ACE2005Event(MyBaseDataset):
-    name = 'ace2005_event'
-
-    entity_types = {}
-    relation_types = {}
-
-    default_input_format = 'stage_one'
-
-    def load_schema(self):
-        filename = os.path.join(self.data_dir(), 'schema_entity.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for short in fp:
-                short = short.strip()
-                natural = short.lower().split(':')[-1]
-                natural = natural.replace('-', ' ')
-                self.entity_types[short] = EntityType(short=short, natural=natural)
-
-        filename = os.path.join(self.data_dir(), 'schema_relation.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for short in fp:
-                short = short.strip()
-                natural = short.lower()
-                natural = natural.replace('-', ' ')
                 self.relation_types[short] = RelationType(short=short, natural=natural)

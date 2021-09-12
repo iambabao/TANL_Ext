@@ -10,10 +10,11 @@
 
 import argparse
 import logging
+import os
 from transformers import AutoTokenizer
 
 from src.data_processor import load_my_dataset as load_dataset
-from src.utils.my_utils import init_logger
+from src.utils.my_utils import init_logger, save_json_lines
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ def main():
     parser.add_argument('--input_format', type=str, default=None, help='')
     parser.add_argument('--output_format', type=str, default=None, help='')
     parser.add_argument("--multitask", action='store_true', help="")
+    parser.add_argument('--output_dir', type=str, default="", help='')
     args = parser.parse_args()
 
     # the order is slightly different from original code
@@ -75,13 +77,13 @@ def main():
         is_eval=True,
     )
 
-    generated_outputs = dataset.output_sentences
-    assert len(dataset.examples) == len(generated_outputs)
+    outputs = []
+    for source, target in zip(dataset.input_sentences, dataset.output_sentences):
+        outputs.append({"source": source, "target": target, 'task_name': args.dataset_name})
 
-    final_results = dataset.evaluate_generated_outputs(generated_outputs)
-
-    for key, value in final_results.items():
-        logger.info("{}: {}".format(key, value))
+    output_dir = os.path.join(args.output_dir, args.dataset_name)
+    os.makedirs(output_dir, exist_ok=True)
+    save_json_lines(outputs, os.path.join(output_dir, 'data_{}.json'.format(args.dataset_split)))
 
 
 if __name__ == "__main__":
