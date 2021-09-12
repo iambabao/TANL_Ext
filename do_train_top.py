@@ -105,17 +105,6 @@ def train(args, data_processor, model, tokenizer, role):
             model.eval()
             augmented_data = data_processor.generate_augmented_data(args, model, tokenizer, batch)
 
-            # print('=' * 20)
-            # for line in tokenizer.batch_decode(
-            #         batch["input_ids"], skip_special_tokens=True, clean_up_tokenization_spaces=False
-            # ):
-            #     print(line)
-            # print('=' * 20)
-            # for line in tokenizer.batch_decode(
-            #         augmented_data["input_ids"], skip_special_tokens=True, clean_up_tokenization_spaces=False
-            # ):
-            #     print(line)
-
             model.train()
             raw_inputs = {
                 "input_ids": batch["input_ids"].to(args.device),
@@ -151,7 +140,7 @@ def train(args, data_processor, model, tokenizer, role):
             else:
                 loss.backward()
 
-            # TODO: update transition matrix P
+            # TODO: update transition matrix P according to raw_loss and augmented_loss
 
             tr_loss += loss.item()
             description = "Global step: {:>6d}, Loss: {:>.4f} vs {:>.4f}".format(
@@ -272,17 +261,33 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
 def main():
     parser = argparse.ArgumentParser()
 
-    # Hyper parameters
+    # Datasets parameters
+    parser.add_argument("--tasks", required=True, type=str, help="")
+    parser.add_argument("--suffix", default=None, type=str, help="")
+
+    # Model hyper parameters
     parser.add_argument(
         "--model_name_or_path",
-        type=str,
         required=True,
+        type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
     )
     parser.add_argument(
-        "--pretrained_model",
+        "--config_name",
+        default="",
         type=str,
+        help="Pretrained config name or path if not the same as model_name",
+    )
+    parser.add_argument(
+        "--tokenizer_name",
+        default="",
+        type=str,
+        help="Pretrained tokenizer name or path if not the same as model_name",
+    )
+    parser.add_argument(
+        "--pretrained_model",
         default=None,
+        type=str,
         help="Path to pretrained model",
     )
     parser.add_argument(
@@ -306,14 +311,14 @@ def main():
     # Directory parameters
     parser.add_argument(
         "--data_dir",
-        type=str,
         required=True,
+        type=str,
         help="The input data dir. Should contain the .tsv files (or other data files) for the task.",
     )
     parser.add_argument(
         "--output_dir",
-        type=str,
         required=True,
+        type=str,
         help="The output directory where the model checkpoints and predictions will be written.",
     )
     parser.add_argument(
@@ -329,22 +334,17 @@ def main():
         help="The log directory where the running details will be written.",
     )
 
-    # Other parameters
-    parser.add_argument("--suffix", default=None, type=str, help="")
-    parser.add_argument(
-        "--config_name", default="", type=str, help="Pretrained config name or path if not the same as model_name"
-    )
-    parser.add_argument(
-        "--tokenizer_name",
-        default="",
-        type=str,
-        help="Pretrained tokenizer name or path if not the same as model_name",
-    )
+    # Training parameters
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--do_eval", action="store_true", help="Whether to run eval on the eval set.")
     parser.add_argument("--save_best", action="store_true", help="Whether to save the best model .")
     parser.add_argument(
         "--evaluate_during_training", action="store_true", help="Rul evaluation during training at each logging step."
+    )
+    parser.add_argument(
+        "--eval_all_checkpoints",
+        action="store_true",
+        help="Evaluate all checkpoints starting with the same prefix as model_name ending and ending with step number",
     )
     parser.add_argument(
         "--per_device_train_batch_size", default=8, type=int, help="Batch size per GPU/CPU for training."
@@ -372,13 +372,10 @@ def main():
         help="If > 0: set total number of training steps to perform. Override num_train_epochs.",
     )
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
+
+    # Other parameters
     parser.add_argument("--logging_steps", type=int, default=50, help="Log every X updates steps.")
     parser.add_argument("--save_steps", type=int, default=50, help="Save checkpoint every X updates steps.")
-    parser.add_argument(
-        "--eval_all_checkpoints",
-        action="store_true",
-        help="Evaluate all checkpoints starting with the same prefix as model_name ending and ending with step number",
-    )
     parser.add_argument("--no_cuda", action="store_true", help="Whether not to use CUDA when available")
     parser.add_argument(
         "--overwrite_output_dir", action="store_true", help="Overwrite the content of the output directory"
@@ -478,6 +475,7 @@ def main():
         args.model_name_or_path,
         args.max_src_length,
         args.max_tgt_length,
+        args.tasks.split(','),
         data_dir=args.data_dir,
         overwrite_cache=args.overwrite_cache,
     )

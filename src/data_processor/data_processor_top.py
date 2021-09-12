@@ -18,9 +18,6 @@ from tqdm import tqdm
 from src.utils.my_utils import read_json_lines
 
 logger = logging.getLogger(__name__)
-task_list = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
-task2id = {'ace2005_joint_er': 0, 'ade': 1, 'conll04': 2, 'nyt': 3}
-id2task = {0: 'ace2005_joint_er', 1: 'ade', 2: 'conll04', 3: 'nyt'}
 
 
 def convert_examples_to_features(examples, tokenizer, max_src_length=None, max_tgt_length=None):
@@ -67,6 +64,7 @@ class DataProcessorTop:
             model_name_or_path,
             max_src_length,
             max_tgt_length,
+            tasks,
             data_dir="",
             overwrite_cache=False,
     ):
@@ -74,56 +72,70 @@ class DataProcessorTop:
         self.max_src_length = max_src_length
         self.max_tgt_length = max_tgt_length
 
+        self.tasks = tasks
         self.data_dir = data_dir
-        self.cache_dir = os.path.join(data_dir, "cache")
-
         self.overwrite_cache = overwrite_cache
 
-        self.transfer_matrix = {}  # TODO
+        self.transfer_matrix = {task: {_: 1.0 for _ in tasks} for task in tasks}
 
     def load_and_cache_data(self, role, tokenizer, suffix=None):
-        os.makedirs(self.cache_dir, exist_ok=True)
+        if suffix is not None:
+            role = '{}_{}'.format(role, suffix)
 
-        if suffix is not None: role = '{}_{}'.format(role, suffix)
-        cached_examples = os.path.join(self.cache_dir, "cached_example_{}".format(role))
-        if os.path.exists(cached_examples) and not self.overwrite_cache:
-            logger.info("Loading examples from cached file {}".format(cached_examples))
-            examples = torch.load(cached_examples)
-        else:
-            examples = []
-            for line in tqdm(
-                list(read_json_lines(os.path.join(self.data_dir, "data_{}.json".format(role)))),
-                desc="Loading Examples"
-            ):
-                sample = {'guid': len(examples)}
-                sample.update(line)
-                examples.append(sample)
-            logger.info("Saving examples into cached file {}".format(cached_examples))
-            torch.save(examples, cached_examples)
+        all_examples, all_features, counter = [], [], {}
+        for task in self.tasks:
+            data_dir = os.path.join(self.data_dir, task)
+            cache_dir = os.path.join(data_dir, 'cache')
+            os.makedirs(cache_dir, exist_ok=True)
 
-        cached_features = os.path.join(
-            self.cache_dir,
-            "cached_feature_{}_{}_{}_{}".format(
-                role,
-                list(filter(None, self.model_name_or_path.split("/"))).pop(),
-                self.max_src_length,
-                self.max_tgt_length,
-            ),
-        )
-        if os.path.exists(cached_features) and not self.overwrite_cache:
-            logger.info("Loading features from cached file {}".format(cached_features))
-            features = torch.load(cached_features)
-        else:
-            features = convert_examples_to_features(examples, tokenizer, self.max_src_length, self.max_tgt_length)
-            logger.info("Saving features into cached file {}".format(cached_features))
-            torch.save(features, cached_features)
+            cached_examples = os.path.join(cache_dir, "cached_example_{}".format(role))
+            if os.path.exists(cached_examples) and not self.overwrite_cache:
+                logger.info("Loading examples from cached file {}".format(cached_examples))
+                examples = torch.load(cached_examples)
+            else:
+                examples = []
+                for line in tqdm(
+                    list(read_json_lines(os.path.join(data_dir, "data_{}.json".format(role)))),
+                    desc="Loading Examples"
+                ):
+                    sample = {'guid': '{}-{}'.format(task, len(examples))}
+                    sample.update(line)
+                    examples.append(sample)
+                logger.info("Saving examples into cached file {}".format(cached_examples))
+                torch.save(examples, cached_examples)
+            all_examples.extend(examples)
 
-        return examples, features
+            cached_features = os.path.join(
+                cache_dir,
+                "cached_feature_{}_{}_{}_{}".format(
+                    role,
+                    list(filter(None, self.model_name_or_path.split("/"))).pop(),
+                    self.max_src_length,
+                    self.max_tgt_length,
+                ),
+            )
+            if os.path.exists(cached_features) and not self.overwrite_cache:
+                logger.info("Loading features from cached file {}".format(cached_features))
+                features = torch.load(cached_features)
+            else:
+                features = convert_examples_to_features(examples, tokenizer, self.max_src_length, self.max_tgt_length)
+                logger.info("Saving features into cached file {}".format(cached_features))
+                torch.save(features, cached_features)
+            all_features.extend(features)
+
+            counter[task] = len(features)
+
+        for task, cnt in counter.items():
+            logger.info("{}: {}".format(task, cnt))
+
+        return all_examples, all_features
 
     def generate_augmented_data(self, args, model, tokenizer, batch):
         raw_task_name = batch["task_name"]
-        # TODO: sample new tasks according to transfer matrix
-        new_task_name = [random.choice(task_list) for _ in batch['task_name']]
+        new_task_name = [
+            random.choices(list(self.transfer_matrix[task].keys()), list(self.transfer_matrix[task].values()))
+            for task in batch['task_name']
+        ]
 
         source = ["{} : {}".format(task_name, source) for task_name, source in zip(new_task_name, batch["source"])]
         encoded = tokenizer.batch_encode_plus(
