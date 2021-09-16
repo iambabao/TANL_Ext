@@ -66,6 +66,7 @@ class DataProcessorTop:
             max_tgt_length,
             tasks,
             data_dir="",
+            cache_dir="cache_top",
             overwrite_cache=False,
     ):
         self.model_name_or_path = model_name_or_path
@@ -74,6 +75,7 @@ class DataProcessorTop:
 
         self.tasks = tasks
         self.data_dir = data_dir
+        self.cache_dir = cache_dir
         self.overwrite_cache = overwrite_cache
 
         self.transfer_matrix = {task: {_: 1.0 for _ in tasks} for task in tasks}
@@ -85,7 +87,7 @@ class DataProcessorTop:
         all_examples, all_features, counter = [], [], {}
         for task in self.tasks:
             data_dir = os.path.join(self.data_dir, task)
-            cache_dir = os.path.join(data_dir, 'cache')
+            cache_dir = os.path.join(data_dir, self.cache_dir)
             os.makedirs(cache_dir, exist_ok=True)
 
             cached_examples = os.path.join(cache_dir, "cached_example_{}".format(role))

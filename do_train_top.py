@@ -476,7 +476,7 @@ def main():
         args.model_name_or_path,
         args.max_src_length,
         args.max_tgt_length,
-        args.tasks.split(','),
+        args.tasks.split(","),
         data_dir=args.data_dir,
         overwrite_cache=args.overwrite_cache,
     )

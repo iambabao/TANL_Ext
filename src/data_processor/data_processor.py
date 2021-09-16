@@ -22,10 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 class InputExample(object):
-    def __init__(self, guid, source, target):
+    def __init__(self, guid, source, target, task_name=None):
         self.guid = guid
         self.source = source
         self.target = target
+        self.task_name = task_name
 
     def __repr__(self):
         return str(self.to_json_string())
@@ -97,6 +98,7 @@ class DataProcessor:
             max_src_length,
             max_tgt_length,
             data_dir="",
+            cache_dir="cache",
             overwrite_cache=False
     ):
         self.model_name_or_path = model_name_or_path
@@ -104,7 +106,7 @@ class DataProcessor:
         self.max_tgt_length = max_tgt_length
 
         self.data_dir = data_dir
-        self.cache_dir = os.path.join(data_dir, "cache")
+        self.cache_dir = os.path.join(data_dir, cache_dir)
 
         self.overwrite_cache = overwrite_cache
 
