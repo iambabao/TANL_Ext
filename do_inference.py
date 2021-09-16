@@ -10,7 +10,6 @@
 
 import argparse
 import logging
-import os
 import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoConfig, AutoModelForSeq2SeqLM
@@ -28,26 +27,32 @@ def main():
     parser.add_argument("--max_src_length", default=128, type=int, help="")
     parser.add_argument("--max_tgt_length", default=128, type=int, help="")
     parser.add_argument("--batch_size", default=16, type=int, help="")
+    parser.add_argument("--with_prefix", action="store_true", help="")
     parser.add_argument("--no_cuda", action="store_true", help="")
     args = parser.parse_args()
 
     init_logger(logging.INFO)
 
     logger.info('Loading model from {}'.format(args.model_name_or_path))
-    tokenizer = AutoTokenizer.from_pretrained("t5-base")
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
     config = AutoConfig.from_pretrained(args.model_name_or_path)
     model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name_or_path, config=config)
     device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     model.to(device)
     model.eval()
 
-    logger.info('processing {}'.format(args.input_file))
+    logger.info('Processing {}'.format(args.input_file))
     entries, results = list(read_json_lines(args.input_file)), []
     for step in tqdm(range((len(entries) + args.batch_size - 1) // args.batch_size), desc="Generating"):
         start_index = step * args.batch_size
         end_index = min(len(entries), (step + 1) * args.batch_size)
+        if args.with_prefix:
+            batch_text = ["{} : {}".format(_['task_name'], _['source']) for _ in entries[start_index:end_index]]
+        else:
+            batch_text = [_['source'] for _ in entries[start_index:end_index]]
+
         encoded = tokenizer.batch_encode_plus(
-            [_['source'] for _ in entries[start_index:end_index]],
+            batch_text,
             padding="max_length",
             truncation=True,
             max_length=args.max_src_length,
@@ -63,7 +68,7 @@ def main():
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )
-        for entry, gen in zip(entries, generated):
+        for entry, gen in zip(entries[start_index:end_index], generated):
             results.append({'source': entry['source'], 'target': entry['target'], 'generated': gen})
     save_json_lines(results, args.output_file)
 

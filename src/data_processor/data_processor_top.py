@@ -131,6 +131,9 @@ class DataProcessorTop:
         return all_examples, all_features
 
     def generate_augmented_data(self, args, model, tokenizer, batch):
+        while hasattr(model, "module"):
+            model = model.module
+
         raw_task_name = batch["task_name"]
         new_task_name = [
             random.choices(list(self.transfer_matrix[task].keys()), list(self.transfer_matrix[task].values()))
