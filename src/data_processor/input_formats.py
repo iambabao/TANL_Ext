@@ -107,14 +107,34 @@ class SRLInput(BaseInputFormat):
 
 
 @register_input_format
-class StageOneInputFormat(BaseInputFormat):
+class EntityInputFormat(BaseInputFormat):
     """
     Input format with given entities.
     """
-    name = 'stage_one'
+    name = 'input_with_entity'
 
     def _format_input(self, example: InputExample) -> str:
         augmentations = [([(entity.type.natural,)], entity.start, entity.end) for entity in example.entities]
+
+        return augment_sentence(
+            example.tokens, augmentations,
+            self.BEGIN_ENTITY_TOKEN, self.SEPARATOR_TOKEN,
+            self.RELATION_SEPARATOR_TOKEN, self.END_ENTITY_TOKEN
+        )
+
+
+@register_input_format
+class TriggerInputFormat(BaseInputFormat):
+    """
+    Input format with given entities.
+    """
+    name = 'input_with_trigger'
+
+    def _format_input(self, example: InputExample) -> str:
+        augmentations = [
+            ([(entity.type.natural,)], entity.start, entity.end)
+            for entity in example.entities if entity.type.natural in ['v', 'verb', 'trigger']
+        ]
 
         return augment_sentence(
             example.tokens, augmentations,

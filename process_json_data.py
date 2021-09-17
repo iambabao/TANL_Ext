@@ -17,6 +17,125 @@ from src.utils.my_utils import init_logger, read_file, save_file, read_json, sav
 logger = logging.getLogger(__name__)
 
 
+def process_ace2005_trigger():
+    task_name = 'ace2005_trigger'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/formatted_json/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/train.json')):
+        tokens = entry['words']
+        entities = []
+        for event in entry['golden-event-mentions']:
+            trigger = {
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger',
+            }
+            entities.append(trigger)
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/dev.json')):
+        tokens = entry['words']
+        entities = []
+        for event in entry['golden-event-mentions']:
+            trigger = {
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger',
+            }
+            entities.append(trigger)
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/test.json')):
+        tokens = entry['words']
+        entities = []
+        for event in entry['golden-event-mentions']:
+            trigger = {
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger',
+            }
+            entities.append(trigger)
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def process_ace2005_argument():
+    task_name = 'ace2005_argument'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/formatted_json/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/train.json')):
+        tokens = entry['words']
+        for event in entry['golden-event-mentions']:
+            entities = [{
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger',
+            }]
+            for arg_info in event['arguments']:
+                entities.append({
+                    'text': arg_info['text'],
+                    'start': arg_info['start'],
+                    'end': arg_info['end'],
+                    'type': arg_info['entity-type'],
+                })
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/dev.json')):
+        tokens = entry['words']
+        for event in entry['golden-event-mentions']:
+            entities = [{
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger',
+            }]
+            for arg_info in event['arguments']:
+                entities.append({
+                    'text': arg_info['text'],
+                    'start': arg_info['start'],
+                    'end': arg_info['end'],
+                    'type': arg_info['entity-type'],
+                })
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/test.json')):
+        tokens = entry['words']
+        for event in entry['golden-event-mentions']:
+            entities = [{
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger',
+            }]
+            for arg_info in event['arguments']:
+                entities.append({
+                    'text': arg_info['text'],
+                    'start': arg_info['start'],
+                    'end': arg_info['end'],
+                    'type': arg_info['entity-type'],
+                })
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
 def process_ace2005_event():
     task_name = 'ace2005_event'
     logger.info('Processing: {}'.format(task_name))
@@ -502,7 +621,6 @@ def process_conll04_re():
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
-# TODO: check
 def process_conll05_srl():
     def _process(_tokens, _tags):
         _entities = []
@@ -549,38 +667,10 @@ def process_conll05_srl():
         line = line.strip()
         if len(line) == 0:
             if len(tokens) != 0:
-                all_entities, all_relations = [], []
                 for i in range(len(bag_of_tags[0])):
                     tags = [bag[i] for bag in bag_of_tags]
                     entities = _process(tokens, tags)
-                    a2b = {}
-                    for a, ent in enumerate(entities):
-                        ent = {
-                            'text': ent['text'],
-                            'start': ent['start'],
-                            'end': ent['end'],
-                            'type': 'verb' if ent['type'] == 'V' else 'argument',
-                        }
-                        if ent in all_entities:
-                            a2b[a] = all_entities.index(ent)
-                        else:
-                            a2b[a] = len(all_entities)
-                            all_entities.append(ent)
-
-                    head = -1
-                    for a, ent in enumerate(entities):
-                        if ent['type'] == 'V':
-                            head = a2b[a]
-                            break
-                    for a, ent in enumerate(entities):
-                        if ent['type'] != 'V':
-                            tail = a2b[a]
-                            all_relations.append({
-                                'head': head,
-                                'tail': tail,
-                                'type': ent['type'],
-                            })
-                outputs.append({'tokens': tokens, 'entities': all_entities, 'relations': all_relations, 'task_name': task_name})
+                    outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
             tokens, bag_of_tags = [], []
         else:
             columns = line.strip().split()
@@ -594,38 +684,10 @@ def process_conll05_srl():
         line = line.strip()
         if len(line) == 0:
             if len(tokens) != 0:
-                all_entities, all_relations = [], []
                 for i in range(len(bag_of_tags[0])):
                     tags = [bag[i] for bag in bag_of_tags]
                     entities = _process(tokens, tags)
-                    a2b = {}
-                    for a, ent in enumerate(entities):
-                        ent = {
-                            'text': ent['text'],
-                            'start': ent['start'],
-                            'end': ent['end'],
-                            'type': 'verb' if ent['type'] == 'V' else 'argument',
-                        }
-                        if ent in all_entities:
-                            a2b[a] = all_entities.index(ent)
-                        else:
-                            a2b[a] = len(all_entities)
-                            all_entities.append(ent)
-
-                    head = -1
-                    for a, ent in enumerate(entities):
-                        if ent['type'] == 'V':
-                            head = a2b[a]
-                            break
-                    for a, ent in enumerate(entities):
-                        if ent['type'] != 'V':
-                            tail = a2b[a]
-                            all_relations.append({
-                                'head': head,
-                                'tail': tail,
-                                'type': ent['type'],
-                            })
-                outputs.append({'tokens': tokens, 'entities': all_entities, 'relations': all_relations, 'task_name': task_name})
+                    outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
             tokens, bag_of_tags = [], []
         else:
             columns = line.strip().split()
@@ -639,38 +701,10 @@ def process_conll05_srl():
         line = line.strip()
         if len(line) == 0:
             if len(tokens) != 0:
-                all_entities, all_relations = [], []
                 for i in range(len(bag_of_tags[0])):
                     tags = [bag[i] for bag in bag_of_tags]
                     entities = _process(tokens, tags)
-                    a2b = {}
-                    for a, ent in enumerate(entities):
-                        ent = {
-                            'text': ent['text'],
-                            'start': ent['start'],
-                            'end': ent['end'],
-                            'type': 'verb' if ent['type'] == 'V' else 'argument',
-                        }
-                        if ent in all_entities:
-                            a2b[a] = all_entities.index(ent)
-                        else:
-                            a2b[a] = len(all_entities)
-                            all_entities.append(ent)
-
-                    head = -1
-                    for a, ent in enumerate(entities):
-                        if ent['type'] == 'V':
-                            head = a2b[a]
-                            break
-                    for a, ent in enumerate(entities):
-                        if ent['type'] != 'V':
-                            tail = a2b[a]
-                            all_relations.append({
-                                'head': head,
-                                'tail': tail,
-                                'type': ent['type'],
-                            })
-                outputs.append({'tokens': tokens, 'entities': all_entities, 'relations': all_relations, 'task_name': task_name})
+                    outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
             tokens, bag_of_tags = [], []
         else:
             columns = line.strip().split()
@@ -679,7 +713,6 @@ def process_conll05_srl():
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
-# TODO: check
 def process_conll12_srl():
     pass
 
@@ -976,6 +1009,8 @@ def generate_schema(root_dir):
 def main():
     init_logger(logging.INFO)
 
+    # process_ace2005_trigger()
+    # process_ace2005_argument()
     # process_ace2005_event()
     # process_ace2005_ner()
     # process_ace2005_re()
@@ -989,7 +1024,7 @@ def main():
     # process_ontonotes_ner()
     # process_tacred_rc()
 
-    # generate_schema('data/formatted_json')
+    generate_schema('data/formatted_json')
 
 
 if __name__ == '__main__':
