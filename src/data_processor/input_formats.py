@@ -133,7 +133,7 @@ class TriggerInputFormat(BaseInputFormat):
     def _format_input(self, example: InputExample) -> str:
         augmentations = [
             ([(entity.type.natural,)], entity.start, entity.end)
-            for entity in example.entities if entity.type.natural in ['v', 'verb', 'trigger']
+            for entity in example.entities if self.is_trigger(entity)
         ]
 
         return augment_sentence(
@@ -141,3 +141,11 @@ class TriggerInputFormat(BaseInputFormat):
             self.BEGIN_ENTITY_TOKEN, self.SEPARATOR_TOKEN,
             self.RELATION_SEPARATOR_TOKEN, self.END_ENTITY_TOKEN
         )
+
+    @staticmethod
+    def is_trigger(entity):
+        if entity.type.short.lower() in ['v', 'verb', 'trigger']:
+            return True
+        if entity.type.short.lower().startswith('trigger:'):
+            return True
+        return False

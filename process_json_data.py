@@ -32,7 +32,7 @@ def process_ace2005_trigger():
                 'text': event['trigger']['text'],
                 'start': event['trigger']['start'],
                 'end': event['trigger']['end'],
-                'type': 'trigger',
+                'type': event['event_type'],
             }
             entities.append(trigger)
         outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
@@ -47,7 +47,7 @@ def process_ace2005_trigger():
                 'text': event['trigger']['text'],
                 'start': event['trigger']['start'],
                 'end': event['trigger']['end'],
-                'type': 'trigger',
+                'type': event['event_type'],
             }
             entities.append(trigger)
         outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
@@ -62,7 +62,7 @@ def process_ace2005_trigger():
                 'text': event['trigger']['text'],
                 'start': event['trigger']['start'],
                 'end': event['trigger']['end'],
-                'type': 'trigger',
+                'type': event['event_type'],
             }
             entities.append(trigger)
         outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
@@ -83,7 +83,7 @@ def process_ace2005_argument():
                 'text': event['trigger']['text'],
                 'start': event['trigger']['start'],
                 'end': event['trigger']['end'],
-                'type': 'trigger',
+                'type': 'trigger:{}'.format(event['event_type']),
             }]
             for arg_info in event['arguments']:
                 entities.append({
@@ -103,7 +103,7 @@ def process_ace2005_argument():
                 'text': event['trigger']['text'],
                 'start': event['trigger']['start'],
                 'end': event['trigger']['end'],
-                'type': 'trigger',
+                'type': 'trigger:{}'.format(event['event_type']),
             }]
             for arg_info in event['arguments']:
                 entities.append({
@@ -123,7 +123,7 @@ def process_ace2005_argument():
                 'text': event['trigger']['text'],
                 'start': event['trigger']['start'],
                 'end': event['trigger']['end'],
-                'type': 'trigger',
+                'type': 'trigger:{}'.format(event['event_type']),
             }]
             for arg_info in event['arguments']:
                 entities.append({
@@ -1024,7 +1024,7 @@ def main():
     # process_ontonotes_ner()
     # process_tacred_rc()
 
-    generate_schema('data/formatted_json')
+    # generate_schema('data/formatted_json')
 
 
 if __name__ == '__main__':

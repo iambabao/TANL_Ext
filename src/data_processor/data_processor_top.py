@@ -14,6 +14,7 @@ import torch
 import random
 import numpy as np
 from tqdm import tqdm
+from torch.nn import CrossEntropyLoss
 
 from src.utils.my_utils import read_json_lines
 
@@ -78,7 +79,7 @@ class DataProcessorTop:
         self.cache_dir = cache_dir
         self.overwrite_cache = overwrite_cache
 
-        self.transfer_matrix = {task: {_: 1.0 for _ in tasks} for task in tasks}
+        self.transition_matrix = {src: {dst: 1.0 for dst in tasks} for src in tasks}
 
     def load_and_cache_data(self, role, tokenizer, suffix=None):
         if suffix is not None:
@@ -138,7 +139,7 @@ class DataProcessorTop:
 
         raw_task_name = batch["task_name"]
         new_task_name = [
-            random.choices(list(self.transfer_matrix[task].keys()), list(self.transfer_matrix[task].values()))
+            random.choices(list(self.transition_matrix[task].keys()), list(self.transition_matrix[task].values()))
             for task in batch['task_name']
         ]
 
@@ -169,4 +170,15 @@ class DataProcessorTop:
             return_tensors="pt",
         )
 
-        return encoded
+        return encoded, raw_task_name, new_task_name
+
+    def update_transition_matrix(self, raw_logits, new_logits, labels, raw_tasks, new_tasks):
+        loss_fct = CrossEntropyLoss(reduction='none', ignore_index=-100)
+        raw_loss = loss_fct(raw_logits.view(-1, raw_logits.size(-1)), labels.view(-1))
+        raw_loss = raw_loss.view(labels.shape).mean(dim=-1)
+        new_loss = loss_fct(new_logits.view(-1, new_logits.size(-1)), labels.view(-1))
+        new_loss = new_loss.view(labels.shape).mean(dim=-1)
+
+        for l1, l2, t1, t2 in zip(raw_loss, new_loss, raw_tasks, new_tasks):
+            self.transition_matrix[t1][t2] += 1 if l1 > l2 else -1
+
