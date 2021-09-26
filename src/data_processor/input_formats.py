@@ -5,7 +5,7 @@
 from abc import ABC, abstractmethod
 import copy
 
-from .input_example import InputExample
+from src.data_processor.input_example import InputExample
 from src.utils.tanl_utils import augment_sentence, get_span
 
 INPUT_FORMATS = {}

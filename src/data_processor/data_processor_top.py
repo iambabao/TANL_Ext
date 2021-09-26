@@ -79,6 +79,8 @@ class DataProcessorTop:
         self.cache_dir = cache_dir
         self.overwrite_cache = overwrite_cache
 
+        self.id2task = {uid: task for uid, task in enumerate(tasks)}
+        self.task2id = {task: uid for uid, task in enumerate(tasks)}
         self.transition_matrix = {src: {dst: 1.0 for dst in tasks} for src in tasks}
 
     def load_and_cache_data(self, role, tokenizer, suffix=None):
@@ -133,17 +135,28 @@ class DataProcessorTop:
 
         return all_examples, all_features
 
+    def sample_new_task(self, batch_raw_task):
+        batch_new_task = [
+            random.choices(list(self.transition_matrix[task].keys()), list(self.transition_matrix[task].values()))
+            for task in batch_raw_task
+        ]
+
+        batch_raw_task_id = [self.task2id[_] for _ in batch_raw_task]
+        batch_new_task_id = [self.task2id[_] for _ in batch_new_task]
+
+        return batch_raw_task, batch_new_task, batch_raw_task_id, batch_new_task_id
+
     def generate_augmented_data(self, args, model, tokenizer, batch):
         while hasattr(model, "module"):
             model = model.module
 
-        raw_task_name = batch["task_name"]
-        new_task_name = [
+        raw_task = batch["task_name"]
+        new_task = [
             random.choices(list(self.transition_matrix[task].keys()), list(self.transition_matrix[task].values()))
-            for task in batch['task_name']
+            for task in raw_task
         ]
 
-        source = ["{} : {}".format(task_name, source) for task_name, source in zip(new_task_name, batch["source"])]
+        source = ["{} : {}".format(task, source) for task, source in zip(new_task, batch["source"])]
         encoded = tokenizer.batch_encode_plus(
             source,
             padding="max_length",
@@ -156,9 +169,9 @@ class DataProcessorTop:
         augmented_outputs = model.generate(**encoded, max_length=self.max_tgt_length).detach().cpu().tolist()
 
         augmented_source = []
-        for task_name, line in zip(raw_task_name, augmented_outputs):
+        for task, line in zip(raw_task, augmented_outputs):
             augmented_source.append("{} : {}".format(
-                task_name,
+                task,
                 tokenizer.decode(line, skip_special_tokens=True, clean_up_tokenization_spaces=False),
             ))
 
@@ -170,15 +183,14 @@ class DataProcessorTop:
             return_tensors="pt",
         )
 
-        return encoded, raw_task_name, new_task_name
+        return encoded, raw_task, new_task
 
-    def update_transition_matrix(self, raw_logits, new_logits, labels, raw_tasks, new_tasks):
+    def update_transition_matrix(self, raw_logits, new_logits, labels, raw_task, new_task):
         loss_fct = CrossEntropyLoss(reduction='none', ignore_index=-100)
         raw_loss = loss_fct(raw_logits.view(-1, raw_logits.size(-1)), labels.view(-1))
         raw_loss = raw_loss.view(labels.shape).mean(dim=-1)
         new_loss = loss_fct(new_logits.view(-1, new_logits.size(-1)), labels.view(-1))
         new_loss = new_loss.view(labels.shape).mean(dim=-1)
 
-        for l1, l2, t1, t2 in zip(raw_loss, new_loss, raw_tasks, new_tasks):
+        for l1, l2, t1, t2 in zip(raw_loss, new_loss, raw_task, new_task):
             self.transition_matrix[t1][t2] += 1 if l1 > l2 else -1
-

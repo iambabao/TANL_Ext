@@ -8,7 +8,7 @@ from collections import defaultdict
 from typing import Tuple, List, Dict
 import numpy as np
 
-from .input_example import InputExample, EntityType, RelationType
+from src.data_processor.input_example import InputExample, EntityType, RelationType
 from src.utils.tanl_utils import augment_sentence, get_span
 
 
