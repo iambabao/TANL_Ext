@@ -14,7 +14,6 @@ import torch
 import random
 import numpy as np
 from tqdm import tqdm
-from torch.nn import CrossEntropyLoss
 
 from src.utils.my_utils import read_json_lines
 
