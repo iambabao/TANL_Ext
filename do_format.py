@@ -1,114 +1,90 @@
-# -*- coding:utf-8  -*-
+# -*- coding: utf-8 -*-
 
 """
-@Author             : Bao
-@Date               : 2021/3/30
+@Author             : huggingface
+@Date               : 2020/7/26
 @Desc               :
 @Last modified by   : Bao
-@Last modified date : 2021/3/30
+@Last modified date : 2021/5/14
 """
 
 import argparse
-import configparser
 import logging
 import os
-from transformers import HfArgumentParser, TrainingArguments, AutoTokenizer
-from transformers.trainer_utils import is_main_process
+from transformers import AutoTokenizer
 
-from src.utils.arguments import ModelArguments, DataTrainingArguments
-from src.data_processor import load_dataset
-from src.utils.tanl_utils import get_episode_indices
-from src.utils.my_utils import init_logger, save_file
+from src.data_processor import load_my_dataset as load_dataset
+from src.utils.my_utils import init_logger, save_json_lines
 
 logger = logging.getLogger(__name__)
 
 
 def main():
+    # parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('-j', '--job', type=str, required=True, help='')
-    parser.add_argument('-c', '--config', type=str, default='data/config.ini', help='')
-    args, remaining_args = parser.parse_known_args()
+    parser.add_argument("--tokenizer_name", type=str, default="", help="")
+    parser.add_argument("--cache_dir", type=str, default=None, help="")
+    parser.add_argument('--data_dir', type=str, required=True, help='')
+    parser.add_argument('--dataset_name', type=str, required=True, help='')
+    parser.add_argument('--dataset_split', type=str, required=True, help='')
+    parser.add_argument('--max_seq_length', type=int, required=True, help='')
+    parser.add_argument('--max_output_seq_length', type=int, default=None, help='')
+    parser.add_argument('--max_seq_length_eval', type=int, default=None, help='')
+    parser.add_argument('--max_output_seq_length_eval', type=int, default=None, help='')
+    parser.add_argument('--eval_nll', type=bool, default=False, help='')
+    parser.add_argument('--chunk_size', type=int, default=128, help='')
+    parser.add_argument('--chunk_overlap', type=int, default=64, help='')
+    parser.add_argument('--chunk_size_eval', type=int, default=None, help='')
+    parser.add_argument('--chunk_overlap_eval', type=int, default=None, help='')
+    parser.add_argument('--overwrite_cache', type=bool, default=True, help='')
+    parser.add_argument('--input_format', type=str, default=None, help='')
+    parser.add_argument('--output_format', type=str, default=None, help='')
+    parser.add_argument("--multitask", action='store_true', help="")
+    parser.add_argument('--output_dir', type=str, default="", help='')
+    args = parser.parse_args()
 
-    config = configparser.ConfigParser(allow_no_value=False)
-    config.read(args.config)
-    assert args.job in config
-    all_args = []
-    for key, value in config.items(args.job):
-        if key in ['do_train', 'do_eval', 'do_predict', 'no_cuda']:
-            if value.lower() == 'true':
-                all_args += ['--{}'.format(key)]
-        else:
-            all_args += ['--{}'.format(key), value]
-    all_args += remaining_args
+    # the order is slightly different from original code
+    if args.max_output_seq_length is None:
+        args.max_output_seq_length = args.max_seq_length
+    if args.max_seq_length_eval is None:
+        args.max_seq_length_eval = args.max_seq_length
+    if args.max_output_seq_length_eval is None:
+        args.max_output_seq_length_eval = args.max_output_seq_length
 
-    hf_parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
-    model_args, data_args, training_args = hf_parser.parse_args_into_dataclasses(all_args)
+    if args.chunk_size_eval is None:
+        args.chunk_size_eval = args.chunk_size
+    if args.chunk_overlap_eval is None:
+        args.chunk_overlap_eval = args.chunk_overlap
 
-    training_args.output_dir = os.path.join(
-        training_args.output_dir,
-        "{}_{}_{}".format(
-            args.job,
-            list(filter(None, model_args.model_name_or_path.split("/"))).pop(),
-            data_args.max_seq_length,
-        ),
-    )
+    # setup logging
+    init_logger(logging.INFO)
 
-    init_logger(logging.INFO if is_main_process(training_args.local_rank) else logging.WARN)
-    logger.info("Training/evaluation parameters {}".format(training_args))
-
+    logger.info("Loading tokenizer")
     tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
+        args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
+        cache_dir=args.cache_dir,
     )
 
-    # get list of dataset names
-    dataset_names = data_args.datasets.split(',')
+    logger.info("Loading dataset")
+    dataset = load_dataset(
+        dataset_name=args.dataset_name,
+        data_args=args,
+        tokenizer=tokenizer,
+        max_input_length=args.max_seq_length_eval,
+        max_output_length=args.max_output_seq_length_eval,
+        split=args.dataset_split,
+        shuffle=False,
+        is_eval=True,
+    )
 
-    # construct list of episode indices
-    episode_indices = get_episode_indices(data_args.episodes)
+    outputs = []
+    for source, target in zip(dataset.input_sentences, dataset.output_sentences):
+        outputs.append({"source": source, "target": target, 'task_name': args.dataset_name})
 
-    # episode loop (note that the episode index is used as the random seed, so that each episode is reproducible)
-    for ep_idx in episode_indices:
-        logging.info('Episode {} / {}'.format(ep_idx, len(episode_indices)))
-        episode_output_dir = os.path.join(training_args.output_dir, 'episode_{:02d}'.format(ep_idx))
-        os.makedirs(episode_output_dir, exist_ok=True)
-
-        for dataset_name in dataset_names:
-            logging.info('Processing dataset {}'.format(dataset_name))
-
-            logger.info('Train!')
-            dataset = load_dataset(
-                dataset_name, data_args, split='train',
-                max_input_length=data_args.max_seq_length, max_output_length=data_args.max_output_seq_length,
-                tokenizer=tokenizer, seed=ep_idx, train_subset=data_args.train_subset,
-            )
-            src_file = os.path.join(episode_output_dir, 'train.source')
-            save_file(dataset.input_sentences, src_file)
-            tgt_file = os.path.join(episode_output_dir, 'train.target')
-            save_file(dataset.output_sentences, tgt_file)
-
-            logger.info('Valid!')
-            dataset = load_dataset(
-                dataset_name, data_args, split='dev',
-                max_input_length=data_args.max_seq_length, max_output_length=data_args.max_output_seq_length,
-                tokenizer=tokenizer, seed=ep_idx, train_subset=data_args.train_subset,
-            )
-            src_file = os.path.join(episode_output_dir, 'valid.source')
-            save_file(dataset.input_sentences, src_file)
-            tgt_file = os.path.join(episode_output_dir, 'valid.target')
-            save_file(dataset.output_sentences, tgt_file)
-
-            logger.info('Test!')
-            dataset = load_dataset(
-                dataset_name, data_args, split='test',
-                max_input_length=data_args.max_seq_length, max_output_length=data_args.max_output_seq_length,
-                tokenizer=tokenizer, seed=ep_idx, train_subset=data_args.train_subset,
-            )
-            src_file = os.path.join(episode_output_dir, 'test.source')
-            save_file(dataset.input_sentences, src_file)
-            tgt_file = os.path.join(episode_output_dir, 'test.target')
-            save_file(dataset.output_sentences, tgt_file)
+    output_dir = os.path.join(args.output_dir, args.dataset_name)
+    os.makedirs(output_dir, exist_ok=True)
+    save_json_lines(outputs, os.path.join(output_dir, 'data_{}.json'.format(args.dataset_split)))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

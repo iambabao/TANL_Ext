@@ -16,13 +16,13 @@ import json
 import torch
 from tqdm import tqdm
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-from transformers import AutoConfig, AutoTokenizer, AutoModelForSeq2SeqLM, set_seed
+from transformers import AutoConfig, AutoTokenizer, set_seed
 from transformers import WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup
 
 from src.model import T5WithPrompt
-from src.data_processor import DataProcessorTop as DataProcessor
-from src.utils.my_utils import init_logger, save_json, save_json_lines, generate_outputs
-from src.utils.my_utils import refine_outputs_v2 as refine_outputs
+from src.data_processor import DataProcessorForAdapter as DataProcessor
+from src.utils.my_utils import init_logger, save_json, save_json_lines
+from src.utils.my_utils import generate_outputs_v2 as generate_outputs, refine_outputs_v2 as refine_outputs
 
 logger = logging.getLogger(__name__)
 
@@ -80,34 +80,34 @@ def train(args, data_processor, model, tokenizer, role):
     for _ in range(int(args.num_train_epochs)):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration")
         for step, batch in enumerate(epoch_iterator):
-            raw_task, new_task, raw_task_id, new_task_id = data_processor.sample_new_task(batch["task_name"])
+            raw_task, new_task, raw_task_id, new_task_id = data_processor.sample_new_tasks(batch["task_name"])
 
             model.train()
             raw_inputs = {
-                "prompt_ids": torch.tensor(raw_task_id, dtype=torch.long).to(args.device),
-                "decoder_prompt_ids": torch.tensor(raw_task_id, dtype=torch.long).to(args.device),
                 "input_ids": batch["input_ids"].to(args.device),
+                "prompt_ids": raw_task_id.to(args.device),
                 "attention_mask": batch["attention_mask"].to(args.device),
+                "decoder_prompt_ids": raw_task_id.to(args.device),
                 "labels": batch["labels"].to(args.device),
             }
-            raw_outputs = model(**raw_inputs)
-            raw_loss, raw_logits = raw_outputs[:2]
+            raw_loss, _raw_batch_loss, raw_logits, _, _raw_task_id = model(**raw_inputs)[:5]
+            _raw_batch_loss = _raw_batch_loss.detach().cpu().tolist()
+            _raw_task_id = _raw_task_id.detach().cpu().tolist()
 
             new_inputs = {
-                "prompt_ids": torch.tensor(raw_task_id, dtype=torch.long).to(args.device),
-                "decoder_prompt_ids": torch.tensor(new_task_id, dtype=torch.long).to(args.device),
                 "input_ids": batch["input_ids"].to(args.device),
+                "prompt_ids": raw_task_id.to(args.device),
                 "attention_mask": batch["attention_mask"].to(args.device),
+                "decoder_prompt_ids": new_task_id.to(args.device),
                 "labels": batch["labels"].to(args.device),
             }
-            new_outputs = model(**new_inputs)
-            new_loss, new_logits = new_outputs[:2]
+            new_loss, _new_batch_loss, new_logits, _, _new_task_id = model(**new_inputs)[:5]
+            _new_batch_loss = _new_batch_loss.detach().cpu().tolist()
+            _new_task_id = _new_task_id.detach().cpu().tolist()
 
             loss = raw_loss + new_loss
 
-            data_processor.update_transition_matrix(
-                raw_logits, new_logits, batch["labels"].to(args.device), raw_task, new_task
-            )
+            data_processor.update_transition_matrix(_raw_batch_loss, _new_batch_loss, _raw_task_id, _new_task_id)
 
             if args.n_gpu > 1:
                 # mean() to average on multi-gpu parallel (not distributed) training
@@ -150,9 +150,6 @@ def train(args, data_processor, model, tokenizer, role):
                             model_to_save.save_pretrained(args.output_dir)
                             tokenizer.save_pretrained(args.output_dir)
                             torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
-                            torch.save(
-                                data_processor.transition_matrix, os.path.join(args.output_dir, "transition_matrix.bin")
-                            )
                     else:
                         output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(global_step))
                         os.makedirs(output_dir, exist_ok=True)
@@ -161,9 +158,6 @@ def train(args, data_processor, model, tokenizer, role):
                         model_to_save.save_pretrained(output_dir)
                         tokenizer.save_pretrained(output_dir)
                         torch.save(args, os.path.join(output_dir, "training_args.bin"))
-                        torch.save(
-                            data_processor.transition_matrix, os.path.join(args.output_dir, "transition_matrix.bin")
-                        )
 
             if 0 < args.max_steps < global_step:
                 epoch_iterator.close()
@@ -179,9 +173,6 @@ def train(args, data_processor, model, tokenizer, role):
         model_to_save.save_pretrained(args.output_dir)
         tokenizer.save_pretrained(args.output_dir)
         torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
-        torch.save(
-            data_processor.transition_matrix, os.path.join(args.output_dir, "transition_matrix.bin")
-        )
 
     return global_step, tr_loss / global_step
 
@@ -208,18 +199,17 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         model.eval()
         with torch.no_grad():
-            raw_task, new_task, raw_task_id, new_task_id = data_processor.sample_new_task(batch["task_name"])
+            _, new_task, raw_task_id, new_task_id = data_processor.sample_new_tasks(batch["task_name"], greedy=True)
 
             inputs = {
-                "task_id": torch.tensor(raw_task_id, dtype=torch.long).to(args.device),
-                "decoder_task_id": torch.tensor(new_task_id, dtype=torch.long).to(args.device),
                 "input_ids": batch["input_ids"].to(args.device),
+                "prompt_ids": raw_task_id.to(args.device),
                 "attention_mask": batch["attention_mask"].to(args.device),
+                "decoder_prompt_ids": new_task_id.to(args.device),
+                "labels": batch["labels"].to(args.device),
             }
-
             outputs = model.generate(**inputs, max_length=args.max_tgt_length)
-            eval_outputs.extend(generate_outputs(outputs.detach().cpu().tolist(), tokenizer))
-
+            eval_outputs.extend(generate_outputs(outputs.detach().cpu().tolist(), batch["task_name"], tokenizer))
     eval_outputs = refine_outputs(examples, eval_outputs)
     eval_outputs_file = os.path.join(output_dir, "{}_outputs.json".format(role))
     save_json_lines(eval_outputs, eval_outputs_file)
@@ -241,6 +231,7 @@ def main():
     # Datasets parameters
     parser.add_argument("--tasks", required=True, type=str, help="")
     parser.add_argument("--suffix", default=None, type=str, help="")
+    parser.add_argument("--with_prefix", action="store_true", help="")
 
     # Model hyper parameters
     parser.add_argument(
@@ -410,11 +401,12 @@ def main():
     # Parse tasks
     args.tasks = args.tasks.split(",")
 
-    # Load pretrained model and tokenizer
+    # Load config, tokenizer and pretrained model
     data_processor = DataProcessor(
         args.model_name_or_path,
         args.max_src_length,
         args.max_tgt_length,
+        args.with_prefix,
         args.tasks,
         data_dir=args.data_dir,
         overwrite_cache=args.overwrite_cache,
@@ -428,11 +420,12 @@ def main():
         do_lower_case=args.do_lower_case,
         cache_dir=args.cache_dir if args.cache_dir else None,
     )
+    # Add custom params for model
+    config.num_prompts = len(args.tasks)
     model = T5WithPrompt.from_pretrained(
         args.pretrained_model or args.model_name_or_path,
         config=config,
         cache_dir=args.cache_dir if args.cache_dir else None,
-        num_prompts=len(args.tasks),
     )
     model.to(args.device)
 
@@ -464,11 +457,8 @@ def main():
                 global_step = ""
 
             # Reload the model
-            model = AutoModelForSeq2SeqLM.from_pretrained(checkpoint)
+            model = T5WithPrompt.from_pretrained(checkpoint)
             model.to(args.device)
-
-            # Reload the transition matrix
-            data_processor.transition_matrix =torch.load(os.path.join(checkpoint, 'transition_matrix.bin'))
 
             # Evaluate
             result = evaluate(args, data_processor, model, tokenizer, "test", prefix=global_step)

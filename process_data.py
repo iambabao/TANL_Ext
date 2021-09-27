@@ -11,351 +11,995 @@
 import logging
 import os
 import re
-import random
+from tqdm import tqdm
 
-from src.utils.my_utils import init_logger, read_file, save_file, read_json_lines, save_json_lines
+from src.utils.my_utils import init_logger, read_file, save_file, read_json, save_json, read_json_lines, save_json_lines
 
 logger = logging.getLogger(__name__)
 
 
-def generate_pipeline(task, role):
-    relation_pattern = re.compile(r'\[(.+?)\|([^=\[\]|]+?)\|([^\[\]]+?)\]')
-
-    sources = []
-    for line in read_file('data/formatted/{}_t5-base_512/episode_00/{}.source'.format(task, role)):
-        sources.append(line.strip())
-
-    targets = []
-    for line in read_file('data/formatted/{}_t5-base_512/episode_00/{}.target'.format(task, role)):
-        targets.append(line.strip())
-
-    middles = []
-    for line in targets:
-        match = relation_pattern.search(line)
-        while match:
-            line = line.replace(match.group(), '[ {} | {} ]'.format(match.group(1).strip(), match.group(2).strip()))
-            match = relation_pattern.search(line)
-        middles.append(line)
-
-    root_dir = 'data/pipeline/{}/stage_one'.format(task)
-    os.makedirs(root_dir, exist_ok=True)
-    stage_one = []
-    for src, tgt in zip(sources, middles):
-        stage_one.append({"source": src, "target": tgt})
-    save_json_lines(stage_one, os.path.join(root_dir, 'data_{}.json'.format(role)))
-
-    root_dir = 'data/pipeline/{}/stage_two'.format(task)
-    os.makedirs(root_dir, exist_ok=True)
-    stage_two = []
-    for src, tgt in zip(middles, targets):
-        stage_two.append({"source": src, "target": tgt})
-    save_json_lines(stage_two, os.path.join(root_dir, 'data_{}.json'.format(role)))
-
-
-def generate_pipeline_with_prefix(task, role):
-    sources = []
-    for line in read_json_lines('data/pipeline/{}/stage_one/data_{}.json'.format(task, role)):
-        sources.append('{} : {}'.format(task, line['source']))
-
-    targets = []
-    for line in read_json_lines('data/pipeline/{}/stage_two/data_{}.json'.format(task, role)):
-        targets.append(line['target'])
-
-    outputs = []
-    for src, tgt in zip(sources, targets):
-        outputs.append({'source': src, 'target': tgt})
-
-    root_dir = 'data/pipeline_with_prefix/{}'.format(task)
-    os.makedirs(root_dir, exist_ok=True)
-    save_json_lines(outputs, os.path.join(root_dir, 'data_{}.json'.format(role)))
-
-
-def generate_pipeline_union(union_name, tasks, role):
-    outputs = []
-    for task in tasks:
-        src_fp = read_json_lines('data/pipeline/{}/stage_one/data_{}.json'.format(task, role))
-        tgt_fp = read_json_lines('data/pipeline/{}/stage_two/data_{}.json'.format(task, role))
-        for source, target in zip(src_fp, tgt_fp):
-            outputs.append({'source': source['source'], 'target': target['target'], 'task_name': task})
-
-    root_dir = 'data/pipeline_union/{}'.format(union_name)
-    os.makedirs(root_dir, exist_ok=True)
-    save_json_lines(outputs, os.path.join(root_dir, 'data_{}.json'.format(role)))
-
-
-def generate_stage_one_union(union_name, tasks, role, prefix='{}'):
-    relation_pattern = re.compile(r'\[(.+?)\|([^=\[\]|]+?)\|([^\[\]]+?)\]')
-
-    sources = []
-    targets = []
-    for task in tasks:
-        for line in read_file('data/formatted/{}_t5-base_512/episode_00/{}.source'.format(task, role)):
-            sources.append(prefix.format(task) + ' : ' + line.strip())
-
-        for line in read_file('data/formatted/{}_t5-base_512/episode_00/{}.target'.format(task, role)):
-            line = line.strip()
-            match = relation_pattern.search(line)
-            while match:
-                line = line.replace(match.group(), '[ {} | {} ]'.format(match.group(1).strip(), match.group(2).strip()))
-                match = relation_pattern.search(line)
-            targets.append(line)
-
-    root_dir = 'data/stage_one_union/{}'.format(union_name)
-    os.makedirs(root_dir, exist_ok=True)
-    outputs = []
-    for src, tgt in zip(sources, targets):
-        outputs.append({"source": src, "target": tgt})
-    save_json_lines(outputs, os.path.join(root_dir, 'data_{}.json'.format(role)))
-
-
-def generate_stage_two(task, role, keep_ratio=1.00):
-    entity_pattern = re.compile(r'\[([^=\[\]|]+?)\|([^=\[\]|]+?)\]')
-    relation_pattern = re.compile(r'\[(.+?)\|([^=\[\]|]+?)\|([^\[\]]+?)\]')
-
-    outputs = []
-    for line in read_file('data/formatted/{}_t5-base_512/episode_00/{}.target'.format(task, role)):
-        line, raw_line = line.strip(), line.strip()
-
-        # remove relation
-        match = relation_pattern.search(line)
-        while match:
-            line = line.replace(match.group(), '[ {} | {} ]'.format(match.group(1).strip(), match.group(2).strip()))
-            match = relation_pattern.search(line)
-
-        # remove entity
-        for match in entity_pattern.finditer(line):
-            if random.random() < keep_ratio: continue
-            line = line.replace(match.group(), match.group(1).strip())
-
-        # remove nested entity when keep_ratio == 0.0
-        if keep_ratio == 0.0:
-            match = entity_pattern.search(line)
-            while match:
-                line = line.replace(match.group(), match.group(1).strip())
-                match = entity_pattern.search(line)
-
-        outputs.append({'source': line, 'target': raw_line})
-
-    output_dir = 'data/stage_two/{}'.format(task)
+def process_ace2005_trigger():
+    task_name = 'ace2005_trigger'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
     os.makedirs(output_dir, exist_ok=True)
-    save_json_lines(outputs, os.path.join(output_dir, 'data_{}_{:03d}.json'.format(role, int(keep_ratio * 100))))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/train.json')):
+        tokens = entry['words']
+        entities = []
+        for event in entry['golden-event-mentions']:
+            trigger = {
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': event['event_type'],
+            }
+            entities.append(trigger)
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/dev.json')):
+        tokens = entry['words']
+        entities = []
+        for event in entry['golden-event-mentions']:
+            trigger = {
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': event['event_type'],
+            }
+            entities.append(trigger)
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/test.json')):
+        tokens = entry['words']
+        entities = []
+        for event in entry['golden-event-mentions']:
+            trigger = {
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': event['event_type'],
+            }
+            entities.append(trigger)
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
-def collect_entity_type(task):
-    entity_pattern = re.compile(r'\[([^=\[\]|]+?)\|([^=\[\]|]+?)\]')
-    relation_pattern = re.compile(r'\[(.+?)\|([^=\[\]|]+?)\|([^\[\]]+?)\]')
-
-    entity_type_set = set()
-    relation_type_set = set()
-    input_dir = 'data/formatted/{}_t5-base_512/episode_00'.format(task)
-    for filename in os.listdir(input_dir):
-        for line in read_file(os.path.join(input_dir, filename)):
-            # remove relation
-            match = relation_pattern.search(line)
-            while match:
-                relation_type_set.add(match.group(3).split('=')[0].strip())
-                line = line.replace(match.group(), '[ {} | {} ]'.format(match.group(1).strip(), match.group(2).strip()))
-                match = relation_pattern.search(line)
-
-            match = entity_pattern.search(line)
-            while match:
-                entity_type_set.add(match.group(2).strip())
-                line = line.replace(match.group(), match.group(1).strip())
-                match = entity_pattern.search(line)
-
-    output_dir = 'data/stage_two_with_noise/{}'.format(task)
+def process_ace2005_argument():
+    task_name = 'ace2005_argument'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
     os.makedirs(output_dir, exist_ok=True)
-    save_file(entity_type_set, os.path.join(output_dir, 'entity_type.txt'))
-    save_file(relation_type_set, os.path.join(output_dir, 'relation_type.txt'))
-
-
-def generate_stage_two_with_noise(task, role, error_ratio=1.00):
-    entity_pattern = re.compile(r'\[([^=\[\]|]+?)\|([^=\[\]|]+?)\]')
-    relation_pattern = re.compile(r'\[(.+?)\|([^=\[\]|]+?)\|([^\[\]]+?)\]')
-    entity_type_set = set(_.strip() for _ in read_file('data/stage_two_with_noise/{}/entity_type.txt'.format(task)))
 
     outputs = []
-    for line in read_file('data/formatted/{}_t5-base_512/episode_00/{}.target'.format(task, role)):
-        line, raw_line = line.strip(), line.strip()
-
-        # remove relation
-        match = relation_pattern.search(line)
-        while match:
-            line = line.replace(match.group(), '[ {} | {} ]'.format(match.group(1).strip(), match.group(2).strip()))
-            match = relation_pattern.search(line)
-
-        # replace entity
-        for match in entity_pattern.finditer(line):
-            if random.random() < error_ratio:
-                entity, entity_type = match.group(1), match.group(2)
-                line = line.replace(
-                    match.group(),
-                    '[ {} | {} ]'.format(entity, random.choice(list(entity_type_set - {entity_type}))),
-                )
-
-        outputs.append({'source': line, 'target': raw_line})
-
-    save_json_lines(outputs, 'data/stage_two_with_noise/{}/data_{}_{:03d}.json'.format(task, role, int(error_ratio * 100)))
-
-
-def generate_stage_two_with_redundant(task, role, error_ratio=0.50, redundant_ratio=0.50):
-    entity_pattern = re.compile(r'\[([^=\[\]|]+?)\|([^=\[\]|]+?)\]')
-    relation_pattern = re.compile(r'\[(.+?)\|([^=\[\]|]+?)\|([^\[\]]+?)\]')
-    entity_type_set = set(_.strip() for _ in read_file('data/stage_two_with_noise/{}/entity_type.txt'.format(task)))
+    for entry in tqdm(read_json('data/raw/ace2005event/train.json')):
+        tokens = entry['words']
+        for event in entry['golden-event-mentions']:
+            entities = [{
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger:{}'.format(event['event_type']),
+            }]
+            for arg_info in event['arguments']:
+                entities.append({
+                    'text': arg_info['text'],
+                    'start': arg_info['start'],
+                    'end': arg_info['end'],
+                    'type': arg_info['entity-type'],
+                })
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
 
     outputs = []
-    for line in read_file('data/formatted/{}_t5-base_512/episode_00/{}.target'.format(task, role)):
-        line, raw_line = line.strip(), line.strip()
+    for entry in tqdm(read_json('data/raw/ace2005event/dev.json')):
+        tokens = entry['words']
+        for event in entry['golden-event-mentions']:
+            entities = [{
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger:{}'.format(event['event_type']),
+            }]
+            for arg_info in event['arguments']:
+                entities.append({
+                    'text': arg_info['text'],
+                    'start': arg_info['start'],
+                    'end': arg_info['end'],
+                    'type': arg_info['entity-type'],
+                })
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
 
-        # remove relation
-        match = relation_pattern.search(line)
-        while match:
-            line = line.replace(match.group(), '[ {} | {} ]'.format(match.group(1).strip(), match.group(2).strip()))
-            match = relation_pattern.search(line)
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/test.json')):
+        tokens = entry['words']
+        for event in entry['golden-event-mentions']:
+            entities = [{
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger:{}'.format(event['event_type']),
+            }]
+            for arg_info in event['arguments']:
+                entities.append({
+                    'text': arg_info['text'],
+                    'start': arg_info['start'],
+                    'end': arg_info['end'],
+                    'type': arg_info['entity-type'],
+                })
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
-        # replace entity
-        for match in entity_pattern.finditer(line):
-            if random.random() < error_ratio:
-                entity, entity_type = match.group(1), match.group(2)
-                line = line.replace(
-                    match.group(),
-                    '[ {} | {} ]'.format(entity, random.choice(list(entity_type_set - {entity_type}))),
-                )
 
-        entity_spans = []
-        for match in entity_pattern.finditer(line):
-            entity_spans.append((match.start(), match.end()))
-        entity_spans = sorted(entity_spans)
+def process_ace2005_ner():
+    task_name = 'ace2005_ner'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
 
-        # add entity
-        spans = []
-        start_index = 0
-        for start, end in entity_spans:
-            if start > start_index:
-                s = line[start_index:start].strip()
-                if len(s) > 0 and '[' not in s and ']' not in s and random.random() < redundant_ratio:
-                    ss = s.split()
-                    if len(ss) <= 10:
-                        candidates = [ss]
-                    else:
-                        candidates = []
-                        batch_start = 0
-                        while batch_start < len(ss):
-                            candidates.append(ss[batch_start:min(batch_start + 5, len(ss))])
-                            batch_start += 5
-                    cur_ss = []
-                    for ss in candidates:
-                        left_index = random.randint(0, len(ss) // 2)
-                        right_index = random.randint(len(ss) // 2 + 1, len(ss))
-                        left = ' '.join(ss[:left_index]).strip()
-                        mid = ' '.join(ss[left_index:right_index]).strip()
-                        right = ' '.join(ss[right_index:]).strip()
-                        cur_ss.append('{} [ {} | {} ] {}'.format(left, mid, random.choice(list(entity_type_set)), right).strip())
-                    s = ' '.join(cur_ss).strip()
-                if len(s) > 0:
-                    spans.append(s)
-            spans.append(line[start:end].strip())
-            start_index = end + 1
-        s = line[start_index:].strip()
-        if len(s) > 0 and '[' not in s and ']' not in s and random.random() < redundant_ratio:
-            ss = s.split()
-            if len(ss) <= 10:
-                candidates = [ss]
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005_ner/train.ner.json')):
+        tokens = entry['context'].strip().split()
+        entities = []
+        for entity_type, block in entry['label'].items():
+            for entity in block:
+                start, end = map(int, entity.split(';'))
+                entities.append({
+                    'text': ' '.join(tokens[start:end + 1]),
+                    'start': start,
+                    'end': end + 1,
+                    'type': entity_type,
+                })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005_ner/dev.ner.json')):
+        tokens = entry['context'].strip().split()
+        entities = []
+        for entity_type, block in entry['label'].items():
+            for entity in block:
+                start, end = map(int, entity.split(';'))
+                entities.append({
+                    'text': ' '.join(tokens[start:end + 1]),
+                    'start': start,
+                    'end': end + 1,
+                    'type': entity_type,
+                })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005_ner/test.ner.json')):
+        tokens = entry['context'].strip().split()
+        entities = []
+        for entity_type, block in entry['label'].items():
+            for entity in block:
+                start, end = map(int, entity.split(';'))
+                entities.append({
+                    'text': ' '.join(tokens[start:end + 1]),
+                    'start': start,
+                    'end': end + 1,
+                    'type': entity_type,
+                })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def process_ace2005_re():
+    task_name = 'ace2005_re'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    for entry in tqdm(read_json_lines('data/raw/ace2005_joint_er/train.json')):
+        tokens = []
+        for sentence in entry['sentences']:
+            tokens.extend(sentence)
+        entities = []
+        for block in entry['ner']:
+            for entity in block:
+                entities.append({
+                    'text': ' '.join(tokens[entity[0]:entity[1] + 1]),
+                    'start': entity[0],
+                    'end': entity[1] + 1,
+                    'type': entity[-1],
+                })
+        relations = []
+        for block in entry['relations']:
+            for relation in block:
+                head_start, head_end = relation[0], relation[1] + 1
+                tail_start, tail_end = relation[2], relation[3] + 1
+                head_entity, tail_entity = -1, -1
+                for i, entity in enumerate(entities):
+                    if entity['start'] == head_start and entity['end'] == head_end:
+                        head_entity = i
+                    if entity['start'] == tail_start and entity['end'] == tail_end:
+                        tail_entity = i
+                relations.append({
+                    'head': head_entity,
+                    'tail': tail_entity,
+                    'type': relation[-1],
+                })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    for entry in tqdm(read_json_lines('data/raw/ace2005_joint_er/dev.json')):
+        tokens = []
+        for sentence in entry['sentences']:
+            tokens.extend(sentence)
+        entities = []
+        for block in entry['ner']:
+            for entity in block:
+                entities.append({
+                    'text': ' '.join(tokens[entity[0]:entity[1] + 1]),
+                    'start': entity[0],
+                    'end': entity[1] + 1,
+                    'type': entity[-1],
+                })
+        relations = []
+        for block in entry['relations']:
+            for relation in block:
+                head_start, head_end = relation[0], relation[1] + 1
+                tail_start, tail_end = relation[2], relation[3] + 1
+                head_entity, tail_entity = -1, -1
+                for i, entity in enumerate(entities):
+                    if entity['start'] == head_start and entity['end'] == head_end:
+                        head_entity = i
+                    if entity['start'] == tail_start and entity['end'] == tail_end:
+                        tail_entity = i
+                relations.append({
+                    'head': head_entity,
+                    'tail': tail_entity,
+                    'type': relation[-1],
+                })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    for entry in tqdm(read_json_lines('data/raw/ace2005_joint_er/test.json')):
+        tokens = []
+        for sentence in entry['sentences']:
+            tokens.extend(sentence)
+        entities = []
+        for block in entry['ner']:
+            for entity in block:
+                entities.append({
+                    'text': ' '.join(tokens[entity[0]:entity[1] + 1]),
+                    'start': entity[0],
+                    'end': entity[1] + 1,
+                    'type': entity[-1],
+                })
+        relations = []
+        for block in entry['relations']:
+            for relation in block:
+                head_start, head_end = relation[0], relation[1] + 1
+                tail_start, tail_end = relation[2], relation[3] + 1
+                head_entity, tail_entity = -1, -1
+                for i, entity in enumerate(entities):
+                    if entity['start'] == head_start and entity['end'] == head_end:
+                        head_entity = i
+                    if entity['start'] == tail_start and entity['end'] == tail_end:
+                        tail_entity = i
+                relations.append({
+                    'head': head_entity,
+                    'tail': tail_entity,
+                    'type': relation[-1],
+                })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def process_ade_re():
+    task_name = 'ade_re'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ade/ade_split_0_train.json')):
+        tokens = entry['tokens']
+        entities = []
+        for entity in entry['entities']:
+            entities.append({
+                'text': ' '.join(tokens[entity['start']:entity['end']]),
+                'start': entity['start'],
+                'end': entity['end'],
+                'type': entity['type'],
+            })
+        relations = []
+        for relation in entry['relations']:
+            relations.append({
+                'head': relation['head'],
+                'tail': relation['tail'],
+                'type': relation['type'],
+            })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ade/ade_split_0_test.json')):
+        tokens = entry['tokens']
+        entities = []
+        for entity in entry['entities']:
+            entities.append({
+                'text': ' '.join(tokens[entity['start']:entity['end']]),
+                'start': entity['start'],
+                'end': entity['end'],
+                'type': entity['type'],
+            })
+        relations = []
+        for relation in entry['relations']:
+            relations.append({
+                'head': relation['head'],
+                'tail': relation['tail'],
+                'type': relation['type'],
+            })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def process_conll03_ner():
+    def _process(_tokens, _tags):
+        _entities = []
+        _start, _type = -1, None
+        for _i, _tag in enumerate(_tags):
+            if _tag.startswith('I'):
+                _prefix, _suffix = _tag[0], _tag[2:]
+                if _type is None:
+                    _start, _type = _i, _suffix
+                elif _suffix != _type:
+                    _entities.append({
+                        'text': ' '.join(_tokens[_start:_i]),
+                        'start': _start,
+                        'end': _i,
+                        'type': _type,
+                    })
+                    _start, _type = _i, _suffix
+            elif _type is not None:
+                _entities.append({
+                    'text': ' '.join(_tokens[_start:_i]),
+                    'start': _start,
+                    'end': _i,
+                    'type': _type,
+                })
+                _start, _type = -1, None
+        if _type is not None:
+            _entities.append({
+                'text': ' '.join(_tokens[_start:len(_tokens)]),
+                'start': _start,
+                'end': len(_tokens),
+                'type': _type,
+            })
+            _start, _type = -1, None
+        return _entities
+
+    task_name = 'conll03_ner'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    tokens, tags = [], []
+    for line in tqdm(read_file('data/raw/conll03/train.txt')):
+        line = line.strip()
+        if line.startswith('-DOCSTART-'):
+            continue
+        if len(line) == 0:
+            if len(tokens) == 0:
+                continue
+            entities = _process(tokens, tags)
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+            tokens, tags = [], []
+        else:
+            token, _, _, tag = line.strip().split()
+            tokens.append(token)
+            tags.append(tag)
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    tokens, tags = [], []
+    for line in tqdm(read_file('data/raw/conll03/dev.txt')):
+        line = line.strip()
+        if line.startswith('-DOCSTART-'):
+            continue
+        if len(line) == 0:
+            if len(tokens) == 0:
+                continue
+            entities = _process(tokens, tags)
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+            tokens, tags = [], []
+        else:
+            token, _, _, tag = line.strip().split()
+            tokens.append(token)
+            tags.append(tag)
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    tokens, tags = [], []
+    for line in tqdm(read_file('data/raw/conll03/test.txt')):
+        line = line.strip()
+        if line.startswith('-DOCSTART-'):
+            continue
+        if len(line) == 0:
+            if len(tokens) == 0:
+                continue
+            entities = _process(tokens, tags)
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+            tokens, tags = [], []
+        else:
+            token, _, _, tag = line.strip().split()
+            tokens.append(token)
+            tags.append(tag)
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def process_conll04_re():
+    task_name = 'conll04_re'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/conll04/conll04_train.json')):
+        tokens = entry['tokens']
+        entities = []
+        for entity in entry['entities']:
+            entities.append({
+                'text': ' '.join(tokens[entity['start']:entity['end']]),
+                'start': entity['start'],
+                'end': entity['end'],
+                'type': entity['type'],
+            })
+        relations = []
+        for relation in entry['relations']:
+            relations.append({
+                'head': relation['head'],
+                'tail': relation['tail'],
+                'type': relation['type'],
+            })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/conll04/conll04_dev.json')):
+        tokens = entry['tokens']
+        entities = []
+        for entity in entry['entities']:
+            entities.append({
+                'text': ' '.join(tokens[entity['start']:entity['end']]),
+                'start': entity['start'],
+                'end': entity['end'],
+                'type': entity['type'],
+            })
+        relations = []
+        for relation in entry['relations']:
+            relations.append({
+                'head': relation['head'],
+                'tail': relation['tail'],
+                'type': relation['type'],
+            })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/conll04/conll04_test.json')):
+        tokens = entry['tokens']
+        entities = []
+        for entity in entry['entities']:
+            entities.append({
+                'text': ' '.join(tokens[entity['start']:entity['end']]),
+                'start': entity['start'],
+                'end': entity['end'],
+                'type': entity['type'],
+            })
+        relations = []
+        for relation in entry['relations']:
+            relations.append({
+                'head': relation['head'],
+                'tail': relation['tail'],
+                'type': relation['type'],
+            })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def process_conll05_srl():
+    def _process(_tokens, _tags):
+        _entities = []
+        _start, _type = -1, None
+        for _i, _tag in enumerate(_tags):
+            if _tag.startswith('B'):
+                _prefix, _suffix = _tag[0], _tag[2:]
+                if _type is None:
+                    _start, _type = _i, _suffix
+                else:
+                    _entities.append({
+                        'text': ' '.join(_tokens[_start:_i]),
+                        'start': _start,
+                        'end': _i,
+                        'type': _type,
+                    })
+                    _start, _type = _i, _suffix
+            elif _tag.startswith('O') and _type is not None:
+                _entities.append({
+                    'text': ' '.join(_tokens[_start:_i]),
+                    'start': _start,
+                    'end': _i,
+                    'type': _type,
+                })
+                _start, _type = -1, None
+        if _type is not None:
+            _entities.append({
+                'text': ' '.join(_tokens[_start:len(_tokens)]),
+                'start': _start,
+                'end': len(_tokens),
+                'type': _type,
+            })
+            _start, _type = -1, None
+        return _entities
+
+    task_name = 'conll05_srl'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    tokens, bag_of_tags = [], []
+    for line in tqdm(read_file('data/raw/CoNLL2005-SRL/train-set.gz.parse.sdeps.combined.bio')):
+        line = line.strip()
+        if len(line) == 0:
+            if len(tokens) != 0:
+                for i in range(len(bag_of_tags[0])):
+                    tags = [bag[i] for bag in bag_of_tags]
+                    entities = _process(tokens, tags)
+                    outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+            tokens, bag_of_tags = [], []
+        else:
+            columns = line.strip().split()
+            tokens.append(columns[3])
+            bag_of_tags.append(columns[14:])
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    tokens, bag_of_tags = [], []
+    for line in tqdm(read_file('data/raw/CoNLL2005-SRL/dev-set.gz.parse.sdeps.combined.bio')):
+        line = line.strip()
+        if len(line) == 0:
+            if len(tokens) != 0:
+                for i in range(len(bag_of_tags[0])):
+                    tags = [bag[i] for bag in bag_of_tags]
+                    entities = _process(tokens, tags)
+                    outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+            tokens, bag_of_tags = [], []
+        else:
+            columns = line.strip().split()
+            tokens.append(columns[3])
+            bag_of_tags.append(columns[14:])
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    tokens, bag_of_tags = [], []
+    for line in tqdm(read_file('data/raw/CoNLL2005-SRL/test.wsj.gz.parse.sdeps.combined.bio')):
+        line = line.strip()
+        if len(line) == 0:
+            if len(tokens) != 0:
+                for i in range(len(bag_of_tags[0])):
+                    tags = [bag[i] for bag in bag_of_tags]
+                    entities = _process(tokens, tags)
+                    outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+            tokens, bag_of_tags = [], []
+        else:
+            columns = line.strip().split()
+            tokens.append(columns[3])
+            bag_of_tags.append(columns[14:])
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def process_conll12_srl():
+    def _process(_tokens, _tags):
+        _entities = []
+        _queue, _queue_head = [], 0
+        for _i, _predicate in enumerate(_tags):
+            _match = re.search(r'^\((.+)\*', _predicate)
+            if _match:
+                for _entity_type in _match.group(1).split('('):
+                    _queue.append((_entity_type, _i))
+            for _ in _predicate[_predicate.index('*') + 1:]:
+                _entities.append({
+                    'text': ' '.join(_tokens[_queue[_queue_head][1]:_i + 1]),
+                    'start': _queue[_queue_head][1],
+                    'end': _i + 1,
+                    'type': _queue[_queue_head][0],
+                })
+                _queue_head += 1
+        return _entities
+
+    task_name = 'conll12_srl'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    tokens, all_tags, num_triggers = [], [], -1
+    for line in tqdm(list(read_file('data/raw/Conll2012-SRL/train.english.v4_gold_conll'))):
+        line = line.strip()
+        if line.startswith('#begin document') or line.startswith('#end document'): continue
+        if len(line) == 0:
+            if len(tokens) == 0: continue
+            for tags in all_tags:
+                entities = _process(tokens, tags)
+                outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': 'conll12_srl'})
+            tokens, all_tags, num_triggers = [], [], -1
+        else:
+            columns = line.split()
+            if num_triggers == -1:
+                num_triggers = len(columns) - 12
+                all_tags = [[] for _ in range(num_triggers)]
+            tokens.append(columns[3])
+            for i, predicate in enumerate(columns[11:-1]):
+                all_tags[i].append(predicate)
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    tokens, all_tags, num_triggers = [], [], -1
+    for line in tqdm(list(read_file('data/raw/Conll2012-SRL/dev.english.v4_gold_conll'))):
+        line = line.strip()
+        if line.startswith('#begin document') or line.startswith('#end document'): continue
+        if len(line) == 0:
+            if len(tokens) == 0: continue
+            for tags in all_tags:
+                entities = _process(tokens, tags)
+                outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': 'conll12_srl'})
+            tokens, all_tags, num_triggers = [], [], -1
+        else:
+            columns = line.split()
+            if num_triggers == -1:
+                num_triggers = len(columns) - 12
+                all_tags = [[] for _ in range(num_triggers)]
+            tokens.append(columns[3])
+            for i, predicate in enumerate(columns[11:-1]):
+                all_tags[i].append(predicate)
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    tokens, all_tags, num_triggers = [], [], -1
+    for line in tqdm(list(read_file('data/raw/Conll2012-SRL/test.english.v4_gold_conll'))):
+        line = line.strip()
+        if line.startswith('#begin document') or line.startswith('#end document'): continue
+        if len(line) == 0:
+            if len(tokens) == 0: continue
+            for tags in all_tags:
+                entities = _process(tokens, tags)
+                outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': 'conll12_srl'})
+            tokens, all_tags, num_triggers = [], [], -1
+        else:
+            columns = line.split()
+            if num_triggers == -1:
+                num_triggers = len(columns) - 12
+                all_tags = [[] for _ in range(num_triggers)]
+            tokens.append(columns[3])
+            for i, predicate in enumerate(columns[11:-1]):
+                all_tags[i].append(predicate)
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def process_genia_ner():
+    task_name = 'genia_ner'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    lines = list(read_file('data/raw/genia/train.data'))
+    for i in tqdm(range(len(lines) // 4)):
+        tokens = lines[i * 4].strip().split()
+        annotations = lines[i * 4 + 2].strip()
+        entities = []
+        for info in annotations.split('|'):
+            if len(info) != 0:
+                position, entity_type = info.split()
+                start, end = map(int, position.split(','))
+                entities.append({
+                    'text': tokens[start:end],
+                    'start': start,
+                    'end': end,
+                    'type': entity_type,
+                })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    lines = list(read_file('data/raw/genia/dev.data'))
+    for i in tqdm(range(len(lines) // 4)):
+        tokens = lines[i * 4].strip().split()
+        annotations = lines[i * 4 + 2].strip()
+        entities = []
+        for info in annotations.split('|'):
+            if len(info) != 0:
+                position, entity_type = info.split()
+                start, end = map(int, position.split(','))
+                entities.append({
+                    'text': tokens[start:end],
+                    'start': start,
+                    'end': end,
+                    'type': entity_type,
+                })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    lines = list(read_file('data/raw/genia/test.data'))
+    for i in tqdm(range(len(lines) // 4)):
+        tokens = lines[i * 4].strip().split()
+        annotations = lines[i * 4 + 2].strip()
+        entities = []
+        for info in annotations.split('|'):
+            if len(info) != 0:
+                position, entity_type = info.split()
+                start, end = map(int, position.split(','))
+                entities.append({
+                    'text': tokens[start:end],
+                    'start': start,
+                    'end': end,
+                    'type': entity_type,
+                })
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def process_nyt_re():
+    task_name = 'nyt_re'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/nyt/train.json')):
+        tokens = entry['tokens']
+        entities = []
+        relations = []
+        for head_start, head_end, head_type, relation_type, tail_start, tail_end, tail_type in entry['spo_details']:
+            head = {'text': ' '.join(tokens[head_start:head_end]), 'start': head_start, 'end': head_end, 'type': head_type}
+            tail = {'text': ' '.join(tokens[tail_start:tail_end]), 'start': tail_start, 'end': tail_end, 'type': tail_type}
+
+            if head in entities:
+                head_index = entities.index(head)
             else:
-                candidates = []
-                batch_start = 0
-                while batch_start < len(ss):
-                    candidates.append(ss[batch_start:min(batch_start + 5, len(ss))])
-                    batch_start += 5
-            cur_ss = []
-            for ss in candidates:
-                left_index = random.randint(0, len(ss) // 2)
-                right_index = random.randint(len(ss) // 2 + 1, len(ss))
-                left = ' '.join(ss[:left_index]).strip()
-                mid = ' '.join(ss[left_index:right_index]).strip()
-                right = ' '.join(ss[right_index:]).strip()
-                cur_ss.append('{} [ {} | {} ] {}'.format(left, mid, random.choice(list(entity_type_set)), right).strip())
-            s = ' '.join(cur_ss).strip()
-        if len(s) > 0:
-            spans.append(s)
+                head_index = len(entities)
+                entities.append(head)
+            if tail in entities:
+                tail_index = entities.index(tail)
+            else:
+                tail_index = len(entities)
+                entities.append(tail)
+            relations.append({'head': head_index, 'tail': tail_index, 'type': relation_type})
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
 
-        line = ' '.join(spans)
-        outputs.append({'source': line, 'target': raw_line})
+    outputs = []
+    for entry in tqdm(read_json('data/raw/nyt/dev.json')):
+        tokens = entry['tokens']
+        entities = []
+        relations = []
+        for head_start, head_end, head_type, relation_type, tail_start, tail_end, tail_type in entry['spo_details']:
+            head = {'text': ' '.join(tokens[head_start:head_end]), 'start': head_start, 'end': head_end, 'type': head_type}
+            tail = {'text': ' '.join(tokens[tail_start:tail_end]), 'start': tail_start, 'end': tail_end, 'type': tail_type}
 
-    root_dir = 'data/stage_two_with_redundant/{}'.format(task)
-    os.makedirs(root_dir, exist_ok=True)
-    save_json_lines(outputs, os.path.join(
-        root_dir,
-        'data_{}_{:03d}_{:03d}.json'.format(role, int(error_ratio * 100), int(redundant_ratio * 100))
-    ))
+            if head in entities:
+                head_index = entities.index(head)
+            else:
+                head_index = len(entities)
+                entities.append(head)
+            if tail in entities:
+                tail_index = entities.index(tail)
+            else:
+                tail_index = len(entities)
+                entities.append(tail)
+            relations.append({'head': head_index, 'tail': tail_index, 'type': relation_type})
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/nyt/test.json')):
+        tokens = entry['tokens']
+        entities = []
+        relations = []
+        for head_start, head_end, head_type, relation_type, tail_start, tail_end, tail_type in entry['spo_details']:
+            head = {'text': ' '.join(tokens[head_start:head_end]), 'start': head_start, 'end': head_end, 'type': head_type}
+            tail = {'text': ' '.join(tokens[tail_start:tail_end]), 'start': tail_start, 'end': tail_end, 'type': tail_type}
+
+            if head in entities:
+                head_index = entities.index(head)
+            else:
+                head_index = len(entities)
+                entities.append(head)
+            if tail in entities:
+                tail_index = entities.index(tail)
+            else:
+                tail_index = len(entities)
+                entities.append(tail)
+            relations.append({'head': head_index, 'tail': tail_index, 'type': relation_type})
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def process_ontonotes_ner():
+    def _process(_tokens, _tags):
+        _entities = []
+        _start, _type = -1, None
+        for _i, _tag in enumerate(_tags):
+            if _tag.startswith('B'):
+                _prefix, _suffix = _tag[0], _tag[2:]
+                if _type is None:
+                    _start, _type = _i, _suffix
+                else:
+                    _entities.append({
+                        'text': ' '.join(_tokens[_start:_i]),
+                        'start': _start,
+                        'end': _i,
+                        'type': _type,
+                    })
+                    _start, _type = _i, _suffix
+            elif _tag.startswith('O') and _type is not None:
+                _entities.append({
+                    'text': ' '.join(_tokens[_start:_i]),
+                    'start': _start,
+                    'end': _i,
+                    'type': _type,
+                })
+                _start, _type = -1, None
+        if _type is not None:
+            _entities.append({
+                'text': ' '.join(_tokens[_start:len(_tokens)]),
+                'start': _start,
+                'end': len(_tokens),
+                'type': _type,
+            })
+            _start, _type = -1, None
+        return _entities
+
+    task_name = 'ontonotes_ner'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    tokens, tags = [], []
+    for line in tqdm(read_file('data/raw/ontonotes/train.txt')):
+        line = line.strip()
+        if len(line) == 0:
+            if len(tokens) == 0:
+                continue
+            entities = _process(tokens, tags)
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+            tokens, tags = [], []
+        else:
+            token, _, _, tag = line.split()
+            tokens.append(token)
+            tags.append(tag)
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    tokens, tags = [], []
+    for line in tqdm(read_file('data/raw/ontonotes/dev.txt')):
+        line = line.strip()
+        if len(line) == 0:
+            if len(tokens) == 0:
+                continue
+            entities = _process(tokens, tags)
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+            tokens, tags = [], []
+        else:
+            token, _, _, tag = line.split()
+            tokens.append(token)
+            tags.append(tag)
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    tokens, tags = [], []
+    for line in tqdm(read_file('data/raw/ontonotes/test.txt')):
+        line = line.strip()
+        if len(line) == 0:
+            if len(tokens) == 0:
+                continue
+            entities = _process(tokens, tags)
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
+            tokens, tags = [], []
+        else:
+            token, _, _, tag = line.split()
+            tokens.append(token)
+            tags.append(tag)
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def process_tacred_rc():
+    task_name = 'tacred_rc'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/tacred/json/train.json')):
+        tokens = entry['token']
+        head_start, head_end, head_type = entry['subj_start'], entry['subj_end'] + 1, entry['subj_type']
+        tail_start, tail_end, tail_type = entry['obj_start'], entry['obj_end'] + 1, entry['obj_type']
+        entities = [
+            {'text': ' '.join(tokens[head_start:head_end]), 'start': head_start, 'end': head_end, 'type': head_type},
+            {'text': ' '.join(tokens[tail_start:tail_end]), 'start': tail_start, 'end': tail_end, 'type': tail_type},
+        ]
+        relations = [{'head': 0, 'tail': 1, 'type': entry['relation']}]
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/tacred/json/dev.json')):
+        tokens = entry['token']
+        head_start, head_end, head_type = entry['subj_start'], entry['subj_end'] + 1, entry['subj_type']
+        tail_start, tail_end, tail_type = entry['obj_start'], entry['obj_end'] + 1, entry['obj_type']
+        entities = [
+            {'text': ' '.join(tokens[head_start:head_end]), 'start': head_start, 'end': head_end, 'type': head_type},
+            {'text': ' '.join(tokens[tail_start:tail_end]), 'start': tail_start, 'end': tail_end, 'type': tail_type},
+        ]
+        relations = [{'head': 0, 'tail': 1, 'type': entry['relation']}]
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/tacred/json/test.json')):
+        tokens = entry['token']
+        head_start, head_end, head_type = entry['subj_start'], entry['subj_end'] + 1, entry['subj_type']
+        tail_start, tail_end, tail_type = entry['obj_start'], entry['obj_end'] + 1, entry['obj_type']
+        entities = [
+            {'text': ' '.join(tokens[head_start:head_end]), 'start': head_start, 'end': head_end, 'type': head_type},
+            {'text': ' '.join(tokens[tail_start:tail_end]), 'start': tail_start, 'end': tail_end, 'type': tail_type},
+        ]
+        relations = [{'head': 0, 'tail': 1, 'type': entry['relation']}]
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
+
+
+def generate_schema(root_dir):
+    for task_name in os.listdir(root_dir):
+        task_dir = os.path.join(root_dir, task_name)
+        if not os.path.isdir(task_dir): continue
+        entity_schema = set()
+        relation_schema = set()
+        for role in ['train', 'valid', 'test']:
+            for entry in read_json_lines(os.path.join(task_dir, 'data_{}.json'.format(role))):
+                entity_schema.update(_['type'] for _ in entry['entities'])
+                relation_schema.update(_['type'] for _ in entry['relations'])
+        save_file(entity_schema, os.path.join(task_dir, 'schema_entity.txt'))
+        save_file(relation_schema, os.path.join(task_dir, 'schema_relation.txt'))
 
 
 def main():
     init_logger(logging.INFO)
 
-    # generate data for pipeline training
-    # tasks = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
-    # for task in tasks:
-    #     logger.info('processing: {}'.format(task))
-    #     generate_pipeline(task, 'train')
-    #     if task != 'ade':
-    #         generate_pipeline(task, 'valid')
-    #     generate_pipeline(task, 'test')
+    # process_ace2005_trigger()
+    # process_ace2005_argument()
+    # process_ace2005_ner()
+    # process_ace2005_re()
+    # process_ade_re()
+    # process_conll03_ner()
+    # process_conll04_re()
+    # process_conll05_srl()
+    # process_conll12_srl()
+    # process_genia_ner()
+    # process_nyt_re()
+    # process_ontonotes_ner()
+    # process_tacred_rc()
 
-    # generate data for pipeline with prefix
-    # tasks = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
-    # for task in tasks:
-    #     logger.info('processing: {}'.format(task))
-    #     generate_pipeline_with_prefix(task, 'train')
-    #     if task != 'ade':
-    #         generate_pipeline_with_prefix(task, 'valid')
-    #     generate_pipeline_with_prefix(task, 'test')
-
-    # generate data for multi-task pipeline training
-    # tasks = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
-    # generate_pipeline_union('210827', tasks, 'train')
-    # generate_pipeline_union('210827', tasks, 'test')
-
-    # generate data for multi-task stage one training
-    # tasks = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
-    # generate_stage_one_union('joint_er', tasks, 'train', prefix='{}')
-    # generate_stage_one_union('joint_er', tasks, 'test', prefix='{}')
-
-    # generate data for stage two training
-    # tasks = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
-    # ratios = [0.00, 0.25, 0.50, 0.75, 1.00]
-    # for task in tasks:
-    #     for ratio in ratios:
-    #         logger.info('processing: {} {}'.format(task, ratio))
-    #         generate_stage_two(task, 'train', ratio)
-    #         if task != 'ade':
-    #             generate_stage_two(task, 'valid', ratio)
-    #         generate_stage_two(task, 'test', ratio)
-
-    # generate data for stage two training with noise
-    # tasks = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
-    # ratios = [0.25, 0.50, 0.75, 1.00]
-    # for task in tasks:
-    #     collect_entity_type(task)
-    #     for ratio in ratios:
-    #         logger.info('processing: {} {}'.format(task, ratio))
-    #         generate_stage_two_with_noise(task, 'train', ratio)
-    #         if task != 'ade':
-    #             generate_stage_two_with_noise(task, 'valid', ratio)
-    #         generate_stage_two_with_noise(task, 'test', ratio)
-
-    # generate data for stage two training with noise
-    # tasks = ['ace2005_joint_er', 'ade', 'conll04', 'nyt']
-    # error_ratios = [0.50]
-    # redundant_ratios = [0.25, 0.50, 0.75]
-    # for task in tasks:
-    #     for error_ratio in error_ratios:
-    #         for redundant_ratio in redundant_ratios:
-    #             logger.info('processing: {} {} {}'.format(task, error_ratio, redundant_ratio))
-    #             generate_stage_two_with_redundant(task, 'train', error_ratio, redundant_ratio)
-    #             if task != 'ade':
-    #                 generate_stage_two_with_redundant(task, 'valid', error_ratio, redundant_ratio)
-    #             generate_stage_two_with_redundant(task, 'test', error_ratio, redundant_ratio)
+    # generate_schema('data/processed')
 
 
 if __name__ == '__main__':

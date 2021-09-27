@@ -114,7 +114,10 @@ class EntityInputFormat(BaseInputFormat):
     name = 'input_with_entity'
 
     def _format_input(self, example: InputExample) -> str:
-        augmentations = [([(entity.type.natural,)], entity.start, entity.end) for entity in example.entities]
+        augmentations = [
+            ([(entity.type.natural,)], entity.start, entity.end)
+            for entity in example.entities
+        ]
 
         return augment_sentence(
             example.tokens, augmentations,

@@ -20,9 +20,8 @@ from transformers import AutoConfig, AutoTokenizer, set_seed
 from transformers import WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup
 
 from src.model import T5WithPrompt
-from src.data_processor import DataProcessorTop as DataProcessor
-from src.utils.my_utils import init_logger, save_json, save_json_lines, generate_outputs
-from src.utils.my_utils import refine_outputs_v2 as refine_outputs
+from src.data_processor import DataProcessorForAdapter as DataProcessor
+from src.utils.my_utils import init_logger, save_json, save_json_lines, generate_outputs, refine_outputs
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +80,11 @@ def train(args, data_processor, model, tokenizer, role):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration")
         for step, batch in enumerate(epoch_iterator):
             model.train()
-            task_ids = torch.tensor([data_processor.task2id[_] for _ in batch["task_name"]], dtype=torch.long)
             inputs = {
-                "prompt_ids": task_ids.to(args.device),
-                "decoder_prompt_ids": task_ids.to(args.device),
                 "input_ids": batch["input_ids"].to(args.device),
+                "prompt_ids": batch["task_id"].to(args.device),
                 "attention_mask": batch["attention_mask"].to(args.device),
+                "decoder_prompt_ids": batch["task_id"].to(args.device),
                 "labels": batch["labels"].to(args.device),
             }
             loss = model(**inputs)[0]
@@ -175,15 +173,15 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         model.eval()
         with torch.no_grad():
-            task_ids = torch.tensor([data_processor.task2id[_] for _ in batch["task_name"]], dtype=torch.long)
             inputs = {
-                "prompt_ids": task_ids.to(args.device),
-                "decoder_prompt_ids": task_ids.to(args.device),
                 "input_ids": batch["input_ids"].to(args.device),
+                "prompt_ids": batch["task_id"].to(args.device),
                 "attention_mask": batch["attention_mask"].to(args.device),
+                "decoder_prompt_ids": batch["task_id"].to(args.device),
+                "labels": batch["labels"].to(args.device),
             }
             outputs = model.generate(**inputs, max_length=args.max_tgt_length)
-            eval_outputs.extend(generate_outputs(outputs.detach().cpu().tolist(), tokenizer))
+            eval_outputs.extend(generate_outputs(outputs.detach().cpu().tolist(), batch["task_name"], tokenizer))
     eval_outputs = refine_outputs(examples, eval_outputs)
     eval_outputs_file = os.path.join(output_dir, "{}_outputs.json".format(role))
     save_json_lines(eval_outputs, eval_outputs_file)
@@ -205,6 +203,7 @@ def main():
     # Datasets parameters
     parser.add_argument("--tasks", required=True, type=str, help="")
     parser.add_argument("--suffix", default=None, type=str, help="")
+    parser.add_argument("--with_prefix", action="store_true", help="")
 
     # Model hyper parameters
     parser.add_argument(
@@ -379,6 +378,7 @@ def main():
         args.model_name_or_path,
         args.max_src_length,
         args.max_tgt_length,
+        args.with_prefix,
         args.tasks,
         data_dir=args.data_dir,
         overwrite_cache=args.overwrite_cache,

@@ -21,7 +21,7 @@ from src.utils.my_utils import read_json_lines
 logger = logging.getLogger(__name__)
 
 
-def convert_examples_to_features(examples, tokenizer, max_src_length=None, max_tgt_length=None):
+def convert_examples_to_features(examples, tokenizer, max_src_length=None, max_tgt_length=None, with_prefix=False):
     if max_src_length is None:
         max_src_length = tokenizer.model_max_length
     if max_tgt_length is None:
@@ -29,8 +29,9 @@ def convert_examples_to_features(examples, tokenizer, max_src_length=None, max_t
 
     features = []
     for (ex_index, example) in enumerate(tqdm(examples, desc="Converting Examples")):
+        input_text = "{} : {}".format(example["task_name"], example["source"]) if with_prefix else example["source"]
         src_encoded = tokenizer(
-            "{} : {}".format(example["task_name"], example["source"]),
+            input_text,
             padding="max_length",
             truncation=True,
             max_length=max_src_length,
@@ -39,7 +40,7 @@ def convert_examples_to_features(examples, tokenizer, max_src_length=None, max_t
         encoded = {
             "guid": example["guid"],
             "task_name": example["task_name"],
-            "source": example["source"],
+            "task_id": example["task_id"],
             "input_ids": np.array(src_encoded["input_ids"], dtype=np.int),
             "attention_mask": np.array(src_encoded["attention_mask"], dtype=np.int),
             "labels": np.array(tgt_encoded["input_ids"], dtype=np.int),
@@ -59,29 +60,31 @@ def convert_examples_to_features(examples, tokenizer, max_src_length=None, max_t
     return features
 
 
-class DataProcessorTop:
+class DataProcessorForAdapter:
     def __init__(
             self,
             model_name_or_path,
             max_src_length,
             max_tgt_length,
+            with_prefix,
             tasks,
             data_dir="",
-            cache_dir="cache_top",
+            cache_dir="cache",
             overwrite_cache=False,
     ):
         self.model_name_or_path = model_name_or_path
         self.max_src_length = max_src_length
         self.max_tgt_length = max_tgt_length
+        self.with_prefix = with_prefix
 
         self.tasks = tasks
         self.data_dir = data_dir
-        self.cache_dir = cache_dir
+        self.cache_dir = "{}_{}".format(cache_dir, "discrete" if with_prefix else "continuous")
         self.overwrite_cache = overwrite_cache
 
         self.id2task = {uid: task for uid, task in enumerate(tasks)}
         self.task2id = {task: uid for uid, task in enumerate(tasks)}
-        self.transition_matrix = {src: {dst: 1.0 for dst in tasks} for src in tasks}
+        self.transition_matrix = [[1.0] * len(tasks) for _ in range(len(tasks))]
 
     def load_and_cache_data(self, role, tokenizer, suffix=None):
         if suffix is not None:
@@ -103,8 +106,9 @@ class DataProcessorTop:
                     list(read_json_lines(os.path.join(data_dir, "data_{}.json".format(role)))),
                     desc="Loading Examples"
                 ):
-                    sample = {'guid': '{}-{}'.format(task, len(examples))}
+                    sample = {"guid": "{}-{}".format(task, len(examples))}
                     sample.update(line)
+                    sample["task_id"] = self.task2id[line["task_name"]]
                     examples.append(sample)
                 logger.info("Saving examples into cached file {}".format(cached_examples))
                 torch.save(examples, cached_examples)
@@ -135,62 +139,23 @@ class DataProcessorTop:
 
         return all_examples, all_features
 
-    def sample_new_task(self, batch_raw_task):
-        batch_new_task = [
-            random.choices(list(self.transition_matrix[task].keys()), list(self.transition_matrix[task].values()))
-            for task in batch_raw_task
-        ]
+    def sample_new_tasks(self, raw_tasks, greedy=False):
+        raw_task_ids = [self.task2id[task] for task in raw_tasks]
 
-        batch_raw_task_id = [self.task2id[_] for _ in batch_raw_task]
-        batch_new_task_id = [self.task2id[_] for _ in batch_new_task]
+        if greedy:
+            new_task_ids = [np.argmax(self.transition_matrix[task_id]) for task_id in raw_task_ids]
+        else:
+            new_task_ids = [
+                random.choices(list(range(len(self.tasks))), self.transition_matrix[task_id])[0]
+                for task_id in raw_task_ids
+            ]
+        new_tasks = [self.id2task[task_id] for task_id in new_task_ids]
 
-        return batch_raw_task, batch_new_task, batch_raw_task_id, batch_new_task_id
+        raw_task_ids = torch.tensor(raw_task_ids, dtype=torch.long)
+        new_task_ids = torch.tensor(new_task_ids, dtype=torch.long)
 
-    def generate_augmented_data(self, args, model, tokenizer, batch):
-        while hasattr(model, "module"):
-            model = model.module
+        return raw_tasks, new_tasks, raw_task_ids, new_task_ids
 
-        raw_task = batch["task_name"]
-        new_task = [
-            random.choices(list(self.transition_matrix[task].keys()), list(self.transition_matrix[task].values()))
-            for task in raw_task
-        ]
-
-        source = ["{} : {}".format(task, source) for task, source in zip(new_task, batch["source"])]
-        encoded = tokenizer.batch_encode_plus(
-            source,
-            padding="max_length",
-            truncation=True,
-            max_length=self.max_src_length,
-            return_tensors="pt",
-        )
-        for key, value in encoded.items():
-            encoded[key] = value.to(args.device)
-        augmented_outputs = model.generate(**encoded, max_length=self.max_tgt_length).detach().cpu().tolist()
-
-        augmented_source = []
-        for task, line in zip(raw_task, augmented_outputs):
-            augmented_source.append("{} : {}".format(
-                task,
-                tokenizer.decode(line, skip_special_tokens=True, clean_up_tokenization_spaces=False),
-            ))
-
-        encoded = tokenizer.batch_encode_plus(
-            augmented_source,
-            padding="max_length",
-            truncation=True,
-            max_length=self.max_src_length,
-            return_tensors="pt",
-        )
-
-        return encoded, raw_task, new_task
-
-    def update_transition_matrix(self, raw_logits, new_logits, labels, raw_task, new_task):
-        loss_fct = CrossEntropyLoss(reduction='none', ignore_index=-100)
-        raw_loss = loss_fct(raw_logits.view(-1, raw_logits.size(-1)), labels.view(-1))
-        raw_loss = raw_loss.view(labels.shape).mean(dim=-1)
-        new_loss = loss_fct(new_logits.view(-1, new_logits.size(-1)), labels.view(-1))
-        new_loss = new_loss.view(labels.shape).mean(dim=-1)
-
-        for l1, l2, t1, t2 in zip(raw_loss, new_loss, raw_task, new_task):
+    def update_transition_matrix(self, raw_loss, new_loss, raw_task_id, new_task_id):
+        for l1, l2, t1, t2 in zip(raw_loss, new_loss, raw_task_id, new_task_id):
             self.transition_matrix[t1][t2] += 1 if l1 > l2 else -1

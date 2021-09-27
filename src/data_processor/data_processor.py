@@ -112,8 +112,8 @@ class DataProcessor:
 
     def load_and_cache_data(self, role, tokenizer, suffix=None):
         os.makedirs(self.cache_dir, exist_ok=True)
-
         if suffix is not None: role = '{}_{}'.format(role, suffix)
+
         cached_examples = os.path.join(self.cache_dir, "cached_example_{}".format(role))
         if os.path.exists(cached_examples) and not self.overwrite_cache:
             logger.info("Loading examples from cached file {}".format(cached_examples))
