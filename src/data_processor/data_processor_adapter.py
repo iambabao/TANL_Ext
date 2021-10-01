@@ -83,7 +83,7 @@ class DataProcessorForAdapter:
 
         self.id2task = {uid: task for uid, task in enumerate(tasks)}
         self.task2id = {task: uid for uid, task in enumerate(tasks)}
-        self.transition_matrix = [[1.0] * len(tasks) for _ in range(len(tasks))]
+        self.transition_matrix = [[100.0] * len(tasks) for _ in range(len(tasks))]
 
     def load_and_cache_data(self, role, tokenizer, suffix=None):
         if suffix is not None:
@@ -126,7 +126,9 @@ class DataProcessorForAdapter:
                 logger.info("Loading features from cached file {}".format(cached_features))
                 features = torch.load(cached_features)
             else:
-                features = convert_examples_to_features(examples, tokenizer, self.max_src_length, self.max_tgt_length)
+                features = convert_examples_to_features(
+                    examples, tokenizer, self.max_src_length, self.max_tgt_length, self.with_prefix
+                )
                 logger.info("Saving features into cached file {}".format(cached_features))
                 torch.save(features, cached_features)
             all_features.extend(features)
@@ -157,4 +159,4 @@ class DataProcessorForAdapter:
 
     def update_transition_matrix(self, raw_loss, new_loss, raw_task_id, new_task_id):
         for l1, l2, t1, t2 in zip(raw_loss, new_loss, raw_task_id, new_task_id):
-            self.transition_matrix[t1][t2] += 1 if l1 > l2 else -1
+            self.transition_matrix[t1][t2] += 0.1 if l1 > l2 else -0.1

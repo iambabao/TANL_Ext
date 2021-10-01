@@ -3,10 +3,10 @@
 
 
 from abc import ABC, abstractmethod
-import copy
 
 from src.data_processor.input_example import InputExample
-from src.utils.tanl_utils import augment_sentence, get_span
+from src.utils.tanl_utils import augment_sentence
+from src.utils.my_utils import is_trigger
 
 INPUT_FORMATS = {}
 
@@ -49,69 +49,11 @@ class PlainInputFormat(BaseInputFormat):
 
 
 @register_input_format
-class RelationClassificationInputFormat(BaseInputFormat):
-    """
-    Input format for relation classification.
-    """
-    name = 'rel_input'
-
-    def _format_input(self, example: InputExample) -> str:
-        en1_span = [example.entities[0].start, example.entities[0].end]
-        en2_span = [example.entities[1].start, example.entities[1].end]
-        words = example.tokens
-        first, latter, head_first = (en1_span, en2_span, True) if en1_span[0] < en2_span[0] \
-            else (en2_span, en1_span, False)
-
-        s = " ".join(words[:first[0]]) \
-            + f" {self.BEGIN_ENTITY_TOKEN} {get_span(words, first)} {self.END_ENTITY_TOKEN} " \
-            + " ".join(words[first[1]:latter[0]])
-        s += f" {self.BEGIN_ENTITY_TOKEN} {get_span(words, latter)} {self.END_ENTITY_TOKEN} " \
-             + " ".join(words[latter[1]:])
-        s += f" The relationship between {self.BEGIN_ENTITY_TOKEN} {get_span(words, en1_span)} " \
-             f"{self.END_ENTITY_TOKEN} and {self.BEGIN_ENTITY_TOKEN} {get_span(words, en2_span)} " \
-             f"{self.END_ENTITY_TOKEN} is"
-
-        return s.strip()
-
-
-@register_input_format
-class EventInputFormat(BaseInputFormat):
-    """
-    Input format for event extraction, where an input example contains exactly one trigger.
-    """
-    name = 'ace2005_event_with_trigger'
-
-    def _format_input(self, example: InputExample) -> str:
-        triggers = example.triggers
-        assert len(triggers) <= 1
-        augmentations = [([(entity.type.natural,)], entity.start, entity.end) for entity in triggers]
-
-        return augment_sentence(example.tokens, augmentations, self.BEGIN_ENTITY_TOKEN, self.SEPARATOR_TOKEN,
-                                self.RELATION_SEPARATOR_TOKEN, self.END_ENTITY_TOKEN)
-
-
-@register_input_format
-class SRLInput(BaseInputFormat):
-    """
-    Input format for SRL, where the predicate is marked.
-    """
-    name = 'srl_input'
-
-    def _format_input(self, example) -> str:
-        assert len(example.sentence_level_entities) == 1
-        start, end = example.sentence_level_entities[0].start, example.sentence_level_entities[0].end
-        words = copy.copy(example.tokens)
-        words.insert(end, self.END_ENTITY_TOKEN)
-        words.insert(start, self.BEGIN_ENTITY_TOKEN)
-        return ' '.join(words)
-
-
-@register_input_format
 class EntityInputFormat(BaseInputFormat):
     """
-    Input format with given entities.
+    This format uses the sentence with given entities as input.
     """
-    name = 'input_with_entity'
+    name = 'entity'
 
     def _format_input(self, example: InputExample) -> str:
         augmentations = [
@@ -129,14 +71,14 @@ class EntityInputFormat(BaseInputFormat):
 @register_input_format
 class TriggerInputFormat(BaseInputFormat):
     """
-    Input format with given entities.
+    This format uses the sentence with given triggers as input..
     """
-    name = 'input_with_trigger'
+    name = 'trigger'
 
     def _format_input(self, example: InputExample) -> str:
         augmentations = [
             ([(entity.type.natural,)], entity.start, entity.end)
-            for entity in example.entities if self.is_trigger(entity)
+            for entity in example.entities if is_trigger(entity)
         ]
 
         return augment_sentence(
@@ -144,11 +86,3 @@ class TriggerInputFormat(BaseInputFormat):
             self.BEGIN_ENTITY_TOKEN, self.SEPARATOR_TOKEN,
             self.RELATION_SEPARATOR_TOKEN, self.END_ENTITY_TOKEN
         )
-
-    @staticmethod
-    def is_trigger(entity):
-        if entity.type.short.lower() in ['v', 'verb', 'trigger']:
-            return True
-        if entity.type.short.lower().startswith('trigger:'):
-            return True
-        return False

@@ -8,7 +8,6 @@
 @Last modified date : 2020/7/26
 """
 
-from .datasets import load_dataset
 from .my_datasets import load_dataset as load_my_dataset
 from .data_processor import DataProcessor
 from .data_processor_adapter import DataProcessorForAdapter

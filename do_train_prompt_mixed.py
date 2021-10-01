@@ -150,6 +150,7 @@ def train(args, data_processor, model, tokenizer, role):
                             model_to_save.save_pretrained(args.output_dir)
                             tokenizer.save_pretrained(args.output_dir)
                             torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
+                            torch.save(data_processor.transition_matrix, os.path.join(args.output_dir, "orders.bin"))
                     else:
                         output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(global_step))
                         os.makedirs(output_dir, exist_ok=True)
@@ -158,6 +159,7 @@ def train(args, data_processor, model, tokenizer, role):
                         model_to_save.save_pretrained(output_dir)
                         tokenizer.save_pretrained(output_dir)
                         torch.save(args, os.path.join(output_dir, "training_args.bin"))
+                        torch.save(data_processor.transition_matrix, os.path.join(output_dir, "orders.bin"))
 
             if 0 < args.max_steps < global_step:
                 epoch_iterator.close()
@@ -173,6 +175,7 @@ def train(args, data_processor, model, tokenizer, role):
         model_to_save.save_pretrained(args.output_dir)
         tokenizer.save_pretrained(args.output_dir)
         torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
+        torch.save(data_processor.transition_matrix, os.path.join(args.output_dir, "orders.bin"))
 
     return global_step, tr_loss / global_step
 
@@ -206,7 +209,6 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
                 "prompt_ids": raw_task_id.to(args.device),
                 "attention_mask": batch["attention_mask"].to(args.device),
                 "decoder_prompt_ids": new_task_id.to(args.device),
-                "labels": batch["labels"].to(args.device),
             }
             outputs = model.generate(**inputs, max_length=args.max_tgt_length)
             eval_outputs.extend(generate_outputs(outputs.detach().cpu().tolist(), batch["task_name"], tokenizer))

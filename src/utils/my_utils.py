@@ -152,6 +152,14 @@ def make_batch_iter(data, batch_size, shuffle):
 
 
 # ====================
+def is_trigger(entity):
+    if entity.type.short.lower() in ['v', 'verb', 'trigger']:
+        return True
+    if entity.type.short.lower().startswith('trigger:'):
+        return True
+    return False
+
+
 def generate_outputs(outputs, tokenizer):
     generated = []
     for line in outputs:
@@ -172,6 +180,7 @@ def refine_outputs(examples, outputs):
     for example, generated in zip(examples, outputs):
         refined_outputs.append({'source': example.source, 'target': example.target, 'generated': generated})
     return refined_outputs
+
 
 def refine_outputs_v2(examples, outputs):
     refined_outputs = []

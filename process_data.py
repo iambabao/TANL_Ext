@@ -137,6 +137,10 @@ def process_ace2005_argument():
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
+def process_ace2005_event():
+    pass
+
+
 def process_ace2005_ner():
     task_name = 'ace2005_ner'
     logger.info('Processing: {}'.format(task_name))

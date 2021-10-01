@@ -8,6 +8,7 @@ from collections import Counter
 from src.data_processor.base_dataset import BaseDataset
 from src.data_processor.input_example import EntityType, RelationType, Entity, Relation, InputExample
 from src.utils.tanl_utils import get_precision_recall_f1
+from src.utils.my_utils import is_trigger
 
 logger = logging.getLogger(__name__)
 DATASETS = {}
@@ -37,14 +38,14 @@ def load_dataset(
     )
 
 
-class MyBaseDataset(BaseDataset):
+class BasicBaseDataset(BaseDataset):
     entity_types = None
     relation_types = None
     natural_entity_types = None
     natural_relation_types = None
 
     default_input_format = 'plain'
-    default_output_format = 'joint_er'
+    default_output_format = 'basic'
 
     def load_cached_data(self, cached_file):
         d = torch.load(cached_file)
@@ -108,7 +109,7 @@ class MyBaseDataset(BaseDataset):
 
         return examples
 
-    def evaluate_example(self, example, output_sentence, model=None, tokenizer=None):
+    def evaluate_example(self, example, output_sentence):
         # extract entities and relations from output sentence
         results = self.output_format.run_inference(
             example,
@@ -127,7 +128,10 @@ class MyBaseDataset(BaseDataset):
         predicted_entities_no_type = set([entity[1:] for entity in predicted_entities])
 
         # load ground truth entities
-        gt_entities = set(entity.to_tuple() for entity in example.entities)
+        if self.default_output_format in ['argument']:
+            gt_entities = set(entity.to_tuple() for entity in example.entities if not is_trigger(entity))
+        else:
+            gt_entities = set(entity.to_tuple() for entity in example.entities)
         gt_entities_no_type = set([entity[1:] for entity in gt_entities])
 
         # compute correct entities
@@ -189,7 +193,7 @@ class MyBaseDataset(BaseDataset):
     def evaluate_generated_outputs(self, generated_outputs):
         results = Counter()
         for example, output in zip(self.examples, generated_outputs):
-            cur_results = self.evaluate_example(example=example, output_sentence=output)
+            cur_results = self.evaluate_example(example, output)
             results += cur_results
 
         entity_precision, entity_recall, entity_f1 = get_precision_recall_f1(
@@ -233,8 +237,6 @@ class MyBaseDataset(BaseDataset):
             new_result = self.evaluate_example(
                     example=example,
                     output_sentence=output_sentence,
-                    model=model,
-                    tokenizer=self.tokenizer,
                 )
             results += new_result
 
@@ -299,7 +301,7 @@ class MyBaseDataset(BaseDataset):
 
 # NER
 @register_dataset
-class CoNLL03NERDataset(MyBaseDataset):
+class CoNLL03NERDataset(BasicBaseDataset):
     name = 'conll03_ner'
 
     natural_entity_types = {
@@ -312,7 +314,7 @@ class CoNLL03NERDataset(MyBaseDataset):
 
 # NER
 @register_dataset
-class OntoNotesNERDataset(MyBaseDataset):
+class OntoNotesNERDataset(BasicBaseDataset):
     name = 'ontonotes_ner'
 
     natural_entity_types = {
@@ -339,7 +341,7 @@ class OntoNotesNERDataset(MyBaseDataset):
 
 # NER
 @register_dataset
-class GENIANERDataset(MyBaseDataset):
+class GENIANERDataset(BasicBaseDataset):
     name = 'genia_ner'
 
     natural_entity_types = {
@@ -353,7 +355,7 @@ class GENIANERDataset(MyBaseDataset):
 
 # NER
 @register_dataset
-class ACE2005NERDataset(MyBaseDataset):
+class ACE2005NERDataset(BasicBaseDataset):
     name = 'ace2005_ner'
 
     natural_entity_types = {
@@ -369,7 +371,7 @@ class ACE2005NERDataset(MyBaseDataset):
 
 # Joint entity relation extraction
 @register_dataset
-class CoNLL04REDataset(MyBaseDataset):
+class CoNLL04REDataset(BasicBaseDataset):
     name = 'conll04_re'
 
     natural_entity_types = {
@@ -390,7 +392,7 @@ class CoNLL04REDataset(MyBaseDataset):
 
 # Joint entity relation extraction
 @register_dataset
-class NYTREDataset(MyBaseDataset):
+class NYTREDataset(BasicBaseDataset):
     name = 'nyt_re'
 
     natural_entity_types = {
@@ -429,7 +431,7 @@ class NYTREDataset(MyBaseDataset):
 
 # Joint entity relation extraction
 @register_dataset
-class ADEREDataset(MyBaseDataset):
+class ADEREDataset(BasicBaseDataset):
     name = 'ade_re'
 
     natural_entity_types = {
@@ -444,7 +446,7 @@ class ADEREDataset(MyBaseDataset):
 
 # Joint entity relation extraction
 @register_dataset
-class ACE2005REDataset(MyBaseDataset):
+class ACE2005REDataset(BasicBaseDataset):
     name = 'ace2005_re'
 
     natural_entity_types = {
@@ -469,13 +471,13 @@ class ACE2005REDataset(MyBaseDataset):
 
 # Relation classification
 @register_dataset
-class TacRedRCDataset(MyBaseDataset):
+class TacRedRCDataset(BasicBaseDataset):
     name = 'tacred_rc'
 
     entity_types = {}
     relation_types = {}
 
-    default_input_format = 'input_with_entity'
+    default_input_format = 'entity'
 
     def load_schema(self):
         filename = os.path.join(self.data_dir(), 'schema_entity.txt')
@@ -499,7 +501,7 @@ class TacRedRCDataset(MyBaseDataset):
 
 # Event trigger
 @register_dataset
-class ACE2005EventTriggerDataset(MyBaseDataset):
+class ACE2005EventTriggerDataset(BasicBaseDataset):
     name = 'ace2005_trigger'
 
     entity_types = {}
@@ -525,13 +527,13 @@ class ACE2005EventTriggerDataset(MyBaseDataset):
 
 # Event argument
 @register_dataset
-class ACE2005EventArgumentDataset(MyBaseDataset):
+class ACE2005EventArgumentDataset(BasicBaseDataset):
     name = 'ace2005_argument'
 
     entity_types = {}
     relation_types = {}
 
-    default_input_format = 'input_with_trigger'
+    default_input_format = 'trigger'
     default_output_format = 'argument'
 
     def load_schema(self):
@@ -554,13 +556,13 @@ class ACE2005EventArgumentDataset(MyBaseDataset):
 
 # SRL
 @register_dataset
-class CoNLL05SRLDataset(MyBaseDataset):
+class CoNLL05SRLDataset(BasicBaseDataset):
     name = 'conll05_srl'
 
     entity_types = {}
     relation_types = {}
 
-    default_input_format = 'input_with_trigger'
+    default_input_format = 'trigger'
     default_output_format = 'argument'
 
     def load_schema(self):
@@ -581,13 +583,13 @@ class CoNLL05SRLDataset(MyBaseDataset):
 
 # SRL
 @register_dataset
-class CoNLL12SRLDataset(MyBaseDataset):
+class CoNLL12SRLDataset(BasicBaseDataset):
     name = 'conll12_srl'
 
     entity_types = {}
     relation_types = {}
 
-    default_input_format = 'input_with_trigger'
+    default_input_format = 'trigger'
     default_output_format = 'argument'
 
     def load_schema(self):

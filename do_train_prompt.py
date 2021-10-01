@@ -21,7 +21,8 @@ from transformers import WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup
 
 from src.model import T5WithPrompt
 from src.data_processor import DataProcessorForAdapter as DataProcessor
-from src.utils.my_utils import init_logger, save_json, save_json_lines, generate_outputs, refine_outputs
+from src.utils.my_utils import init_logger, save_json, save_json_lines
+from src.utils.my_utils import generate_outputs_v2 as generate_outputs, refine_outputs_v2 as refine_outputs
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +179,6 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
                 "prompt_ids": batch["task_id"].to(args.device),
                 "attention_mask": batch["attention_mask"].to(args.device),
                 "decoder_prompt_ids": batch["task_id"].to(args.device),
-                "labels": batch["labels"].to(args.device),
             }
             outputs = model.generate(**inputs, max_length=args.max_tgt_length)
             eval_outputs.extend(generate_outputs(outputs.detach().cpu().tolist(), batch["task_name"], tokenizer))
@@ -330,10 +330,11 @@ def main():
     if args.do_train:
         args.output_dir = os.path.join(
                 args.output_dir,
-                "{}_{}_{}".format(
+                "{}_{}_{}_{}".format(
                     list(filter(None, args.model_name_or_path.split("/"))).pop(),
                     args.max_src_length,
                     args.max_tgt_length,
+                    "discrete" if args.with_prefix else "continuous",
                 ),
             )
     if (
@@ -357,10 +358,11 @@ def main():
         os.makedirs(args.log_dir, exist_ok=True)
         args.log_file = os.path.join(
             args.log_dir,
-            "{}_{}_{}".format(
+            "{}_{}_{}_{}".format(
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
+                "discrete" if args.with_prefix else "continuous",
             ),
         )
     else:

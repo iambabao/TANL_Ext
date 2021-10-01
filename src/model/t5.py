@@ -395,9 +395,10 @@ class T5WithPrompt(T5PreTrainedModel):
             use_cache=None,
             output_attentions=None,
             output_hidden_states=None,
+            return_dict=None,
     ):
         use_cache = use_cache if use_cache is not None else self.config.use_cache
-        return_dict = False  # Set to False for custom output
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # FutureWarning: head_mask was separated into two input args - head_mask, decoder_head_mask
         if head_mask is not None and decoder_head_mask is None:
@@ -495,8 +496,21 @@ class T5WithPrompt(T5PreTrainedModel):
             batch_loss = loss.view(labels.shape).mean(dim=-1)
             loss = loss.mean(dim=-1)
 
-        output = (lm_logits, prompt_ids, decoder_prompt_ids) + decoder_outputs[1:] + encoder_outputs
-        return ((loss, batch_loss) + output) if loss is not None else output
+        if not return_dict:
+            output = (lm_logits, prompt_ids, decoder_prompt_ids) + decoder_outputs[1:] + encoder_outputs
+            return ((loss, batch_loss) + output) if loss is not None else output
+
+        return Seq2SeqLMOutput(
+            loss=loss,
+            logits=lm_logits,
+            past_key_values=decoder_outputs.past_key_values,
+            decoder_hidden_states=decoder_outputs.hidden_states,
+            decoder_attentions=decoder_outputs.attentions,
+            cross_attentions=decoder_outputs.cross_attentions,
+            encoder_last_hidden_state=encoder_outputs.last_hidden_state,
+            encoder_hidden_states=encoder_outputs.hidden_states,
+            encoder_attentions=encoder_outputs.attentions,
+        )
 
     def prepare_inputs_for_generation(
         self, input_ids, past=None, attention_mask=None, use_cache=None, encoder_outputs=None, **kwargs
