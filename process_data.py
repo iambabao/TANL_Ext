@@ -86,12 +86,12 @@ def process_ace2005_argument():
                 'end': event['trigger']['end'],
                 'type': 'trigger:{}'.format(event['event_type']),
             }]
-            for arg_info in event['arguments']:
+            for argument_info in event['arguments']:
                 entities.append({
-                    'text': arg_info['text'],
-                    'start': arg_info['start'],
-                    'end': arg_info['end'],
-                    'type': arg_info['entity-type'],
+                    'text': argument_info['text'],
+                    'start': argument_info['start'],
+                    'end': argument_info['end'],
+                    'type': argument_info['role'],
                 })
             outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
     save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
@@ -106,12 +106,12 @@ def process_ace2005_argument():
                 'end': event['trigger']['end'],
                 'type': 'trigger:{}'.format(event['event_type']),
             }]
-            for arg_info in event['arguments']:
+            for argument_info in event['arguments']:
                 entities.append({
-                    'text': arg_info['text'],
-                    'start': arg_info['start'],
-                    'end': arg_info['end'],
-                    'type': arg_info['entity-type'],
+                    'text': argument_info['text'],
+                    'start': argument_info['start'],
+                    'end': argument_info['end'],
+                    'type': argument_info['role'],
                 })
             outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
     save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
@@ -126,19 +126,127 @@ def process_ace2005_argument():
                 'end': event['trigger']['end'],
                 'type': 'trigger:{}'.format(event['event_type']),
             }]
-            for arg_info in event['arguments']:
+            for argument_info in event['arguments']:
                 entities.append({
-                    'text': arg_info['text'],
-                    'start': arg_info['start'],
-                    'end': arg_info['end'],
-                    'type': arg_info['entity-type'],
+                    'text': argument_info['text'],
+                    'start': argument_info['start'],
+                    'end': argument_info['end'],
+                    'type': argument_info['role'],
                 })
             outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
 def process_ace2005_event():
-    pass
+    task_name = 'ace2005_event'
+    logger.info('Processing: {}'.format(task_name))
+    output_dir = 'data/processed/{}'.format(task_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/train.json')):
+        tokens = entry['words']
+        entities = []
+        relations = []
+        for event in entry['golden-event-mentions']:
+            trigger = {
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger:{}'.format(event['event_type']),
+            }
+            if trigger in entities:
+                trigger_index = entities.index(trigger)
+            else:
+                trigger_index = len(entities)
+                entities.append(trigger)
+
+            for argument_info in event['arguments']:
+                argument = {
+                    'text': argument_info['text'],
+                    'start': argument_info['start'],
+                    'end': argument_info['end'],
+                    'type': argument_info['entity-type'],
+                }
+                if argument in entities:
+                    argument_index = entities.index(argument)
+                else:
+                    argument_index = len(entities)
+                    entities.append(argument)
+
+                relations.append({'head': argument_index, 'tail': trigger_index, 'type': argument_info['role']})
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/dev.json')):
+        tokens = entry['words']
+        entities = []
+        relations = []
+        for event in entry['golden-event-mentions']:
+            trigger = {
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger:{}'.format(event['event_type']),
+            }
+            if trigger in entities:
+                trigger_index = entities.index(trigger)
+            else:
+                trigger_index = len(entities)
+                entities.append(trigger)
+
+            for argument_info in event['arguments']:
+                argument = {
+                    'text': argument_info['text'],
+                    'start': argument_info['start'],
+                    'end': argument_info['end'],
+                    'type': argument_info['entity-type'],
+                }
+                if argument in entities:
+                    argument_index = entities.index(argument)
+                else:
+                    argument_index = len(entities)
+                    entities.append(argument)
+
+                relations.append({'head': argument_index, 'tail': trigger_index, 'type': argument_info['role']})
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
+
+    outputs = []
+    for entry in tqdm(read_json('data/raw/ace2005event/test.json')):
+        tokens = entry['words']
+        entities = []
+        relations = []
+        for event in entry['golden-event-mentions']:
+            trigger = {
+                'text': event['trigger']['text'],
+                'start': event['trigger']['start'],
+                'end': event['trigger']['end'],
+                'type': 'trigger:{}'.format(event['event_type']),
+            }
+            if trigger in entities:
+                trigger_index = entities.index(trigger)
+            else:
+                trigger_index = len(entities)
+                entities.append(trigger)
+
+            for argument_info in event['arguments']:
+                argument = {
+                    'text': argument_info['text'],
+                    'start': argument_info['start'],
+                    'end': argument_info['end'],
+                    'type': argument_info['entity-type'],
+                }
+                if argument in entities:
+                    argument_index = entities.index(argument)
+                else:
+                    argument_index = len(entities)
+                    entities.append(argument)
+
+                relations.append({'head': argument_index, 'tail': trigger_index, 'type': argument_info['role']})
+        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
 def process_ace2005_ner():
@@ -991,6 +1099,7 @@ def main():
 
     # process_ace2005_trigger()
     # process_ace2005_argument()
+    # process_ace2005_event()
     # process_ace2005_ner()
     # process_ace2005_re()
     # process_ade_re()

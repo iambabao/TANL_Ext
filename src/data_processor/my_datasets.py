@@ -8,7 +8,7 @@ from collections import Counter
 from src.data_processor.base_dataset import BaseDataset
 from src.data_processor.input_example import EntityType, RelationType, Entity, Relation, InputExample
 from src.utils.tanl_utils import get_precision_recall_f1
-from src.utils.my_utils import is_trigger
+from src.utils.my_utils import to_natural, is_trigger
 
 logger = logging.getLogger(__name__)
 DATASETS = {}
@@ -335,7 +335,7 @@ class OntoNotesNERDataset(BasicBaseDataset):
         'PRODUCT': 'product',
         'QUANTITY': 'quantity',
         'TIME': 'time',
-        'WORK_OF_ART': 'work_of_art',
+        'WORK_OF_ART': 'work of art',
     }
 
 
@@ -482,19 +482,16 @@ class TacRedRCDataset(BasicBaseDataset):
     def load_schema(self):
         filename = os.path.join(self.data_dir(), 'schema_entity.txt')
         with open(filename, 'r', encoding='utf-8') as fp:
-            for short in fp:
-                short = short.strip()
-                natural = short.lower()
-                natural = natural.replace('_', ' ')
+            for line in fp:
+                short = line.strip()
+                natural = to_natural(short)
                 self.entity_types[short] = EntityType(short=short, natural=natural)
 
         filename = os.path.join(self.data_dir(), 'schema_relation.txt')
         with open(filename, 'r', encoding='utf-8') as fp:
-            for short in fp:
-                short = short.strip()
-                natural = short.lower().split(':')[-1]
-                natural = natural.replace('_', ' ')
-                natural = natural.replace('/', ' ')
+            for line in fp:
+                short = line.strip()
+                natural = to_natural(short)
                 natural = natural.replace('stateorprovince', 'state or province')
                 self.relation_types[short] = RelationType(short=short, natural=natural)
 
@@ -510,18 +507,16 @@ class ACE2005EventTriggerDataset(BasicBaseDataset):
     def load_schema(self):
         filename = os.path.join(self.data_dir(), 'schema_entity.txt')
         with open(filename, 'r', encoding='utf-8') as fp:
-            for short in fp:
-                short = short.strip()
-                natural = short.lower().split(':')[-1]
-                natural = natural.replace('-', ' ')
+            for line in fp:
+                short = line.strip()
+                natural = to_natural(short)
                 self.entity_types[short] = EntityType(short=short, natural=natural)
 
         filename = os.path.join(self.data_dir(), 'schema_relation.txt')
         with open(filename, 'r', encoding='utf-8') as fp:
-            for short in fp:
-                short = short.strip()
-                natural = short.lower()
-                natural = natural.replace('-', ' ')
+            for line in fp:
+                short = line.strip()
+                natural = to_natural(short)
                 self.relation_types[short] = RelationType(short=short, natural=natural)
 
 
@@ -539,18 +534,39 @@ class ACE2005EventArgumentDataset(BasicBaseDataset):
     def load_schema(self):
         filename = os.path.join(self.data_dir(), 'schema_entity.txt')
         with open(filename, 'r', encoding='utf-8') as fp:
-            for short in fp:
-                short = short.strip()
-                natural = short.lower().split(':')[-1]
-                natural = natural.replace('-', ' ')
+            for line in fp:
+                short = line.strip()
+                natural = to_natural(short)
                 self.entity_types[short] = EntityType(short=short, natural=natural)
 
         filename = os.path.join(self.data_dir(), 'schema_relation.txt')
         with open(filename, 'r', encoding='utf-8') as fp:
-            for short in fp:
-                short = short.strip()
-                natural = short.lower()
-                natural = natural.replace('-', ' ')
+            for line in fp:
+                short = line.strip()
+                natural = to_natural(short)
+                self.relation_types[short] = RelationType(short=short, natural=natural)
+
+
+@register_dataset
+class ACE2005EventTriggerDataset(BasicBaseDataset):
+    name = 'ace2005_event'
+
+    entity_types = {}
+    relation_types = {}
+
+    def load_schema(self):
+        filename = os.path.join(self.data_dir(), 'schema_entity.txt')
+        with open(filename, 'r', encoding='utf-8') as fp:
+            for line in fp:
+                short = line.strip()
+                natural = to_natural(short)
+                self.entity_types[short] = EntityType(short=short, natural=natural)
+
+        filename = os.path.join(self.data_dir(), 'schema_relation.txt')
+        with open(filename, 'r', encoding='utf-8') as fp:
+            for line in fp:
+                short = line.strip()
+                natural = to_natural(short)
                 self.relation_types[short] = RelationType(short=short, natural=natural)
 
 
@@ -568,16 +584,16 @@ class CoNLL05SRLDataset(BasicBaseDataset):
     def load_schema(self):
         filename = os.path.join(self.data_dir(), 'schema_entity.txt')
         with open(filename, 'r', encoding='utf-8') as fp:
-            for short in fp:
-                short = short.strip()
-                natural = short.lower()
+            for line in fp:
+                short = line.strip()
+                natural = to_natural(short)
                 self.entity_types[short] = EntityType(short=short, natural=natural)
 
         filename = os.path.join(self.data_dir(), 'schema_relation.txt')
         with open(filename, 'r', encoding='utf-8') as fp:
-            for short in fp:
-                short = short.strip()
-                natural = short.lower()
+            for line in fp:
+                short = line.strip()
+                natural = to_natural(short)
                 self.relation_types[short] = RelationType(short=short, natural=natural)
 
 
@@ -595,14 +611,14 @@ class CoNLL12SRLDataset(BasicBaseDataset):
     def load_schema(self):
         filename = os.path.join(self.data_dir(), 'schema_entity.txt')
         with open(filename, 'r', encoding='utf-8') as fp:
-            for short in fp:
-                short = short.strip()
-                natural = short.lower()
+            for line in fp:
+                short = line.strip()
+                natural = to_natural(short)
                 self.entity_types[short] = EntityType(short=short, natural=natural)
 
         filename = os.path.join(self.data_dir(), 'schema_relation.txt')
         with open(filename, 'r', encoding='utf-8') as fp:
-            for short in fp:
-                short = short.strip()
-                natural = short.lower()
+            for line in fp:
+                short = line.strip()
+                natural = to_natural(short)
                 self.relation_types[short] = RelationType(short=short, natural=natural)

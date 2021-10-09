@@ -11,6 +11,7 @@
 import json
 import random
 import logging
+from nltk.translate.bleu_score import corpus_bleu
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,14 @@ def make_batch_iter(data, batch_size, shuffle):
 
 
 # ====================
+def to_natural(short):
+    natural = short.lower()
+    natural = natural.split(':')[-1]
+    natural = natural.replace('_', ' ')
+    natural = natural.replace('/', ' ')
+    return natural
+
+
 def is_trigger(entity):
     if entity.type.short.lower() in ['v', 'verb', 'trigger']:
         return True
@@ -193,3 +202,19 @@ def refine_outputs_v2(examples, outputs):
             'new_task': out['new_task'],
         })
     return refined_outputs
+
+
+def compute_metrics(outputs):
+    references = []
+    hypotheses = []
+    for entry in outputs:
+        references.append([entry['target'].strip().split()])  # ref is a list of words
+        hypotheses.append(entry['generated'].strip().split())  # hyp is a list of words
+
+    bleu1 = corpus_bleu(references, hypotheses, (1., 0., 0., 0.))
+    bleu2 = corpus_bleu(references, hypotheses, (0.5, 0.5, 0., 0.))
+    bleu3 = corpus_bleu(references, hypotheses, (0.33, 0.33, 0.33, 0.))
+    bleu4 = corpus_bleu(references, hypotheses, (0.25, 0.25, 0.25, 0.25))
+    result = {'Bleu_1': bleu1, 'Bleu_2': bleu2, 'Bleu_3': bleu3, 'Bleu_4': bleu4, }
+
+    return result
