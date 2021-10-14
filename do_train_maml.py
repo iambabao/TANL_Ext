@@ -13,6 +13,7 @@ import logging
 import os
 import torch
 import higher
+import random
 from tqdm import tqdm
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from transformers import (
@@ -24,7 +25,7 @@ AdamW,
 get_linear_schedule_with_warmup,
 )
 
-from src.data_processor import DataProcessorForMAML as DataProcessor
+from src.data_processor import DataProcessor
 from src.utils.my_utils import (
 init_logger,
 save_json_lines,
@@ -40,11 +41,13 @@ def train(args, data_processors, model, tokenizer, role):
 
     # Prepare data loader for each task
     data_loaders = {}
+    task_sampler = {}
     for task, processor in data_processors.items():
         examples, dataset = processor.load_and_cache_data(role, tokenizer, args.suffix)
         sampler = RandomSampler(dataset)
         loader = DataLoader(dataset, sampler=sampler, batch_size=train_batch_size)
         data_loaders[task] = loader
+        task_sampler[task] = len(dataset)
 
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ["bias", "LayerNorm.weight"]
@@ -80,26 +83,13 @@ def train(args, data_processors, model, tokenizer, role):
         model.train()
         total_loss = []
         inner_optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate * 10)
-        for task, loader in data_loaders.items():
-            with higher.innerloop_ctx(model, inner_optimizer, copy_initial_weights=False) as (inner_model, diff_opt):
-                # Meta train!
-                for _ in range(args.gradient_accumulation_steps):
-                    batch = next(iter(loader))
-                    inputs = {
-                        "input_ids": batch[0].to(args.device),
-                        "attention_mask": batch[1].to(args.device),
-                        "labels": batch[-1].to(args.device),
-                    }
-                    outputs = inner_model(**inputs)
-                    loss = outputs[0]
-                    if args.n_gpu > 1:
-                        loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
-                    if args.gradient_accumulation_steps > 1:
-                        loss = loss / args.gradient_accumulation_steps
-                diff_opt.step(loss)
+        with higher.innerloop_ctx(model, inner_optimizer, copy_initial_weights=False) as (inner_model, diff_opt):
+            # Sample tasks from distribution!
+            support_task, query_task = random.choices(list(task_sampler.keys()), list(task_sampler.values()), k=2)
 
-                # Meta test!
-                batch = next(iter(loader))
+            # Meta train!
+            for _ in range(args.gradient_accumulation_steps):
+                batch = next(iter(data_loaders[support_task]))
                 inputs = {
                     "input_ids": batch[0].to(args.device),
                     "attention_mask": batch[1].to(args.device),
@@ -109,18 +99,33 @@ def train(args, data_processors, model, tokenizer, role):
                 loss = outputs[0]
                 if args.n_gpu > 1:
                     loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
-                loss.backward()
-                total_loss.append(loss.item())
+                if args.gradient_accumulation_steps > 1:
+                    loss = loss / args.gradient_accumulation_steps
+            diff_opt.step(loss)
 
-        # Update original parameters!
+            # Meta test!
+            batch = next(iter(data_loaders[query_task]))
+            inputs = {
+                "input_ids": batch[0].to(args.device),
+                "attention_mask": batch[1].to(args.device),
+                "labels": batch[-1].to(args.device),
+            }
+            outputs = inner_model(**inputs)
+            loss = outputs[0]
+            if args.n_gpu > 1:
+                loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
+            loss.backward()
+            total_loss.append(loss.item())
+
+        # Update model parameters!
         optimizer.step()
         scheduler.step()
         model.zero_grad()
 
-        description = "Global step: {:>6d}, Loss: {:>.4f}".format(global_step, sum(total_loss) / len(total_loss))
-        global_iter.set_description(description)
-
         # Log metrics
+        global_iter.set_description("Global step: {:>6d}, Loss: {:>.4f}".format(
+            global_step, sum(total_loss) / len(total_loss)
+        ))
         if args.logging_steps > 0 and global_step % args.logging_steps == 0 and args.evaluate_during_training:
             results = evaluate(args, data_processors, model, tokenizer, "valid", prefix=str(global_step))
             current_score, best_score = results["Bleu_4"], max(best_score, results["Bleu_4"])
@@ -135,6 +140,7 @@ def train(args, data_processors, model, tokenizer, role):
             tokenizer.save_pretrained(output_dir)
             torch.save(args, os.path.join(output_dir, "training_args.bin"))
 
+    # Save model checkpoint
     logger.info("Saving model checkpoint to {}".format(args.output_dir))
     os.makedirs(args.output_dir, exist_ok=True)
     model_to_save = model.module if hasattr(model, "module") else model
@@ -195,6 +201,7 @@ def main():
     # Datasets parameters
     parser.add_argument("--tasks", required=True, type=str, help="")
     parser.add_argument("--suffix", default=None, type=str, help="")
+    parser.add_argument("--with_prefix", action="store_true", help="")
 
     # Model hyper parameters
     parser.add_argument(
@@ -202,6 +209,12 @@ def main():
         required=True,
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
+    )
+    parser.add_argument(
+        "--pretrained_model",
+        default=None,
+        type=str,
+        help="Path to pretrained model",
     )
     parser.add_argument(
         "--config_name",
@@ -302,10 +315,12 @@ def main():
     # Setup output dir
     args.output_dir = os.path.join(
             args.output_dir,
-            "{}_{}_{}_{:.1e}".format(
+            "{}_{}_{}_{}_{}_{:.1e}".format(
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
+                args.max_outer_steps,
+                args.per_device_train_batch_size,
                 args.learning_rate,
             ),
         )
@@ -323,6 +338,7 @@ def main():
     # Setup CUDA, GPU training
     args.device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     args.n_gpu = 0 if args.no_cuda else torch.cuda.device_count()
+    assert args.n_gpu <= 1, "higher do not support multi-gpu training"
 
     # Setup log dir
     if args.log_dir is not None:
@@ -355,6 +371,7 @@ def main():
             args.max_tgt_length,
             [task],
             data_dir=args.data_dir,
+            with_prefix=args.with_prefix,
             overwrite_cache=args.overwrite_cache,
         )
     config = AutoConfig.from_pretrained(
@@ -367,7 +384,7 @@ def main():
         cache_dir=args.cache_dir if args.cache_dir else None,
     )
     model = AutoModelForSeq2SeqLM.from_pretrained(
-        args.model_name_or_path,
+        args.pretrained_model if args.pretrained_model else args.model_name_or_path,
         config=config,
         cache_dir=args.cache_dir if args.cache_dir else None,
     )

@@ -16,11 +16,25 @@ import json
 import torch
 from tqdm import tqdm
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-from transformers import AutoConfig, AutoTokenizer, AutoModelForSeq2SeqLM, set_seed
-from transformers import WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup
+from transformers import (
+set_seed,
+AutoConfig,
+AutoTokenizer,
+AutoModelForSeq2SeqLM,
+WEIGHTS_NAME,
+AdamW,
+get_linear_schedule_with_warmup,
+)
 
 from src.data_processor import DataProcessor
-from src.utils.my_utils import init_logger, save_json, save_json_lines, generate_outputs, refine_outputs
+from src.utils.my_utils import (
+init_logger,
+save_json,
+save_json_lines,
+generate_outputs,
+refine_outputs,
+compute_metrics,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +78,7 @@ def train(args, data_processor, model, tokenizer, role):
     logger.info("Num Epochs = %d", args.num_train_epochs)
     logger.info("Instantaneous batch size per GPU = %d", args.per_device_train_batch_size)
     logger.info(
-        "Total train batch size (w. parallel, distributed & accumulation) = %d",
+        "Total train batch size (w. parallel & accumulation) = %d",
         args.train_batch_size * args.gradient_accumulation_steps
     )
     logger.info("Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
@@ -110,7 +124,7 @@ def train(args, data_processor, model, tokenizer, role):
                 if args.logging_steps > 0 and global_step % args.logging_steps == 0:
                     if args.evaluate_during_training:
                         results = evaluate(args, data_processor, model, tokenizer, role="valid", prefix=str(global_step))
-                        current_score, best_score = results["F1"], max(best_score, results["F1"])
+                        current_score, best_score = results["Bleu_4"], max(best_score, results["Bleu_4"])
 
                 # Save model checkpoint
                 if args.save_steps > 0 and global_step % args.save_steps == 0:
@@ -183,7 +197,7 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
     eval_outputs_file = os.path.join(output_dir, "{}_outputs.json".format(role))
     save_json_lines(eval_outputs, eval_outputs_file)
 
-    eval_results = {'F1': 1.0}
+    eval_results = compute_metrics(eval_outputs)
     eval_results_file = os.path.join(output_dir, "{}_results.txt".format(role))
     with open(eval_results_file, "w") as writer:
         logger.info("***** Eval results {} *****".format(prefix))
@@ -197,12 +211,23 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
 def main():
     parser = argparse.ArgumentParser()
 
+    # Datasets parameters
+    parser.add_argument("--tasks", required=True, type=str, help="")
+    parser.add_argument("--suffix", default=None, type=str, help="")
+    parser.add_argument("--with_prefix", action="store_true", help="")
+
     # Model hyper parameters
     parser.add_argument(
         "--model_name_or_path",
         required=True,
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
+    )
+    parser.add_argument(
+        "--pretrained_model",
+        default=None,
+        type=str,
+        help="Path to pretrained model",
     )
     parser.add_argument(
         "--config_name",
@@ -300,7 +325,6 @@ def main():
     )
 
     # Other parameters
-    parser.add_argument("--suffix", default=None, type=str, help="")
     parser.add_argument("--logging_steps", type=int, default=50, help="Log every X updates steps.")
     parser.add_argument("--save_steps", type=int, default=50, help="Save checkpoint every X updates steps.")
     parser.add_argument("--no_cuda", action="store_true", help="Whether not to use CUDA when available")
@@ -317,10 +341,11 @@ def main():
     if args.do_train:
         args.output_dir = os.path.join(
                 args.output_dir,
-                "{}_{}_{}".format(
+                "{}_{}_{}_{}".format(
                     list(filter(None, args.model_name_or_path.split("/"))).pop(),
                     args.max_src_length,
                     args.max_tgt_length,
+                    "raw" if not args.with_prefix else "prefix",
                 ),
             )
     if (
@@ -344,10 +369,11 @@ def main():
         os.makedirs(args.log_dir, exist_ok=True)
         args.log_file = os.path.join(
             args.log_dir,
-            "{}_{}_{}".format(
+            "{}_{}_{}_{}".format(
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
+                "raw" if not args.with_prefix else "prefix",
             ),
         )
     else:
@@ -357,12 +383,17 @@ def main():
     # Set seed
     set_seed(args.seed)
 
+    # Parse tasks
+    args.tasks = args.tasks.split(",")
+
     # Load config, tokenizer and pretrained model
     data_processor = DataProcessor(
         args.model_name_or_path,
         args.max_src_length,
         args.max_tgt_length,
+        args.tasks,
         data_dir=args.data_dir,
+        with_prefix=args.with_prefix,
         overwrite_cache=args.overwrite_cache,
     )
     config = AutoConfig.from_pretrained(
@@ -375,7 +406,7 @@ def main():
         cache_dir=args.cache_dir if args.cache_dir else None,
     )
     model = AutoModelForSeq2SeqLM.from_pretrained(
-        args.model_name_or_path,
+        args.pretrained_model if args.pretrained_model else args.model_name_or_path,
         config=config,
         cache_dir=args.cache_dir if args.cache_dir else None,
     )
