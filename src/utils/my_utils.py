@@ -176,30 +176,14 @@ def generate_outputs(outputs, tokenizer):
     return generated
 
 
-def generate_outputs_v2(outputs, new_tasks, tokenizer):
-    generated = []
-    for out, task in zip(outputs, new_tasks):
-        gen = tokenizer.decode(out, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-        generated.append({'generated': gen, 'new_task': task})
-    return generated
-
-
 def refine_outputs(examples, outputs):
     refined_outputs = []
     for example, generated in zip(examples, outputs):
-        refined_outputs.append({'source': example.source, 'target': example.target, 'generated': generated})
-    return refined_outputs
-
-
-def refine_outputs_v2(examples, outputs):
-    refined_outputs = []
-    for example, out in zip(examples, outputs):
         refined_outputs.append({
-            'source': example['source'],
-            'target': example['target'],
-            'generated': out['generated'],
-            'raw_task': example['task_name'],
-            'new_task': out['new_task'],
+            'source': example.source,
+            'target': example.target,
+            'generated': generated,
+            'task_name': example.task_name,
         })
     return refined_outputs
 

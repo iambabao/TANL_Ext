@@ -547,29 +547,6 @@ class ACE2005EventArgumentDataset(BasicBaseDataset):
                 self.relation_types[short] = RelationType(short=short, natural=natural)
 
 
-@register_dataset
-class ACE2005EventTriggerDataset(BasicBaseDataset):
-    name = 'ace2005_event'
-
-    entity_types = {}
-    relation_types = {}
-
-    def load_schema(self):
-        filename = os.path.join(self.data_dir(), 'schema_entity.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for line in fp:
-                short = line.strip()
-                natural = to_natural(short)
-                self.entity_types[short] = EntityType(short=short, natural=natural)
-
-        filename = os.path.join(self.data_dir(), 'schema_relation.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for line in fp:
-                short = line.strip()
-                natural = to_natural(short)
-                self.relation_types[short] = RelationType(short=short, natural=natural)
-
-
 # SRL
 @register_dataset
 class CoNLL05SRLDataset(BasicBaseDataset):

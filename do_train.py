@@ -85,9 +85,9 @@ def train(args, data_processor, model, tokenizer, role):
     logger.info("Total optimization steps = %d", t_total)
 
     global_step = 0
-    tr_loss = 0.0
+    training_loss = 0.0
     current_score, best_score = 0.0, 0.0
-    set_seed(args.seed)  # Added here for reproductibility
+    set_seed(args.seed)
     model.zero_grad()
     for _ in range(int(args.num_train_epochs)):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration")
@@ -96,9 +96,8 @@ def train(args, data_processor, model, tokenizer, role):
             inputs = {
                 "input_ids": batch[0].to(args.device),
                 "attention_mask": batch[1].to(args.device),
-                "labels": batch[2].to(args.device),
+                "labels": batch[-1].to(args.device),
             }
-
             outputs = model(**inputs)
             loss = outputs[0]
 
@@ -106,10 +105,9 @@ def train(args, data_processor, model, tokenizer, role):
                 loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
-
             loss.backward()
 
-            tr_loss += loss.item()
+            training_loss += loss.item()
             description = "Global step: {:>6d}, Loss: {:>.4f}".format(global_step, loss.item())
             epoch_iterator.set_description(description)
             if (step + 1) % args.gradient_accumulation_steps == 0:
@@ -120,24 +118,11 @@ def train(args, data_processor, model, tokenizer, role):
                 model.zero_grad()
                 global_step += 1
 
-                # Log metrics
-                if args.logging_steps > 0 and global_step % args.logging_steps == 0:
-                    if args.evaluate_during_training:
-                        results = evaluate(args, data_processor, model, tokenizer, role="valid", prefix=str(global_step))
-                        current_score, best_score = results["Bleu_4"], max(best_score, results["Bleu_4"])
-
-                # Save model checkpoint
-                if args.save_steps > 0 and global_step % args.save_steps == 0:
-                    if args.save_best:
-                        if current_score >= best_score:
-                            logger.info("Saving model checkpoint to %s", args.output_dir)
-                            os.makedirs(args.output_dir, exist_ok=True)
-                            model_to_save = model.module if hasattr(model, "module") else model
-                            model_to_save.save_pretrained(args.output_dir)
-                            tokenizer.save_pretrained(args.output_dir)
-                            torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
-                    else:
-                        output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(global_step))
+                if args.evaluate_during_training and args.logging_steps > 0 and global_step % args.logging_steps == 0:
+                    results = evaluate(args, data_processor, model, tokenizer, role="valid", prefix=str(global_step))
+                    current_score, best_score = results["Bleu_4"], max(best_score, results["Bleu_4"])
+                    if current_score >= best_score:
+                        output_dir = os.path.join(args.output_dir, "checkpoint-best")
                         os.makedirs(output_dir, exist_ok=True)
                         logger.info("Saving model checkpoint to %s", output_dir)
                         model_to_save = model.module if hasattr(model, "module") else model
@@ -145,22 +130,29 @@ def train(args, data_processor, model, tokenizer, role):
                         tokenizer.save_pretrained(output_dir)
                         torch.save(args, os.path.join(output_dir, "training_args.bin"))
 
+                if not args.save_best and args.save_steps > 0 and global_step % args.save_steps == 0:
+                    output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(global_step))
+                    os.makedirs(output_dir, exist_ok=True)
+                    logger.info("Saving model checkpoint to %s", output_dir)
+                    model_to_save = model.module if hasattr(model, "module") else model
+                    model_to_save.save_pretrained(output_dir)
+                    tokenizer.save_pretrained(output_dir)
+                    torch.save(args, os.path.join(output_dir, "training_args.bin"))
+
             if 0 < args.max_steps < global_step:
                 epoch_iterator.close()
                 break
         if 0 < args.max_steps < global_step:
             break
 
-    # save last trained model if save_best is False
-    if not args.save_best:
-        logger.info("Saving model checkpoint to %s", args.output_dir)
-        os.makedirs(args.output_dir, exist_ok=True)
-        model_to_save = model.module if hasattr(model, "module") else model
-        model_to_save.save_pretrained(args.output_dir)
-        tokenizer.save_pretrained(args.output_dir)
-        torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
+    logger.info("Saving model checkpoint to %s", args.output_dir)
+    os.makedirs(args.output_dir, exist_ok=True)
+    model_to_save = model.module if hasattr(model, "module") else model
+    model_to_save.save_pretrained(args.output_dir)
+    tokenizer.save_pretrained(args.output_dir)
+    torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
 
-    return global_step, tr_loss / global_step
+    return global_step, training_loss / global_step
 
 
 def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
@@ -168,8 +160,7 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
         output_dir = args.output_dir
     else:
         output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(prefix))
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
 
     args.eval_batch_size = args.per_device_eval_batch_size * max(1, args.n_gpu)
     examples, dataset = data_processor.load_and_cache_data(role, tokenizer, args.suffix)
@@ -189,7 +180,6 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
                 "input_ids": batch[0].to(args.device),
                 "attention_mask": batch[1].to(args.device),
             }
-
             outputs = model.generate(**inputs, max_length=args.max_tgt_length)
             eval_outputs.extend(generate_outputs(outputs.detach().cpu().tolist(), tokenizer))
 
@@ -288,7 +278,7 @@ def main():
     # Training parameters
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--do_eval", action="store_true", help="Whether to run eval on the eval set.")
-    parser.add_argument("--save_best", action="store_true", help="Whether to save the best model .")
+    parser.add_argument("--save_best", action="store_true", help="Whether only to save the best model.")
     parser.add_argument(
         "--evaluate_during_training", action="store_true", help="Rul evaluation during training at each logging step."
     )
@@ -417,8 +407,8 @@ def main():
 
     # Training
     if args.do_train:
-        global_step, tr_loss = train(args, data_processor, model, tokenizer, role="train")
-        logger.info("global_step = %s, average loss = %s", global_step, tr_loss)
+        global_step, training_loss = train(args, data_processor, model, tokenizer, role="train")
+        logger.info("global_step = %s, average loss = %s", global_step, training_loss)
 
     # Evaluation - we can ask to evaluate all the checkpoints (sub-directories) in a directory
     results = {}
@@ -438,6 +428,7 @@ def main():
             except ValueError: global_step = ""
 
             # Reload the model
+            logger.info("Reload model from {}".format(checkpoint))
             model = AutoModelForSeq2SeqLM.from_pretrained(checkpoint)
             model.to(args.device)
 
