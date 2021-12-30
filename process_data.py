@@ -79,6 +79,10 @@ def process_ace2005_argument():
     outputs = []
     for entry in tqdm(read_json('data/raw/ace2005event/train.json')):
         tokens = entry['words']
+        id2entity = {}
+        for entity in entry['golden-entity-mentions']:
+            start, end, e_type = entity['start'], entity['end'], entity['entity-type']
+            id2entity[(start, end, e_type)] = entity['head']
         for event in entry['golden-event-mentions']:
             entities = [{
                 'text': event['trigger']['text'],
@@ -87,10 +91,11 @@ def process_ace2005_argument():
                 'type': 'trigger:{}'.format(event['event_type']),
             }]
             for argument_info in event['arguments']:
+                head = id2entity[(argument_info['start'], argument_info['end'], argument_info['entity-type'])]
                 entities.append({
-                    'text': argument_info['text'],
-                    'start': argument_info['start'],
-                    'end': argument_info['end'],
+                    'text': head['text'],
+                    'start': head['start'],
+                    'end': head['end'],
                     'type': argument_info['role'],
                 })
             outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
@@ -99,6 +104,10 @@ def process_ace2005_argument():
     outputs = []
     for entry in tqdm(read_json('data/raw/ace2005event/dev.json')):
         tokens = entry['words']
+        id2entity = {}
+        for entity in entry['golden-entity-mentions']:
+            start, end, e_type = entity['start'], entity['end'], entity['entity-type']
+            id2entity[(start, end, e_type)] = entity['head']
         for event in entry['golden-event-mentions']:
             entities = [{
                 'text': event['trigger']['text'],
@@ -107,10 +116,11 @@ def process_ace2005_argument():
                 'type': 'trigger:{}'.format(event['event_type']),
             }]
             for argument_info in event['arguments']:
+                head = id2entity[(argument_info['start'], argument_info['end'], argument_info['entity-type'])]
                 entities.append({
-                    'text': argument_info['text'],
-                    'start': argument_info['start'],
-                    'end': argument_info['end'],
+                    'text': head['text'],
+                    'start': head['start'],
+                    'end': head['end'],
                     'type': argument_info['role'],
                 })
             outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
@@ -119,6 +129,10 @@ def process_ace2005_argument():
     outputs = []
     for entry in tqdm(read_json('data/raw/ace2005event/test.json')):
         tokens = entry['words']
+        id2entity = {}
+        for entity in entry['golden-entity-mentions']:
+            start, end, e_type = entity['start'], entity['end'], entity['entity-type']
+            id2entity[(start, end, e_type)] = entity['head']
         for event in entry['golden-event-mentions']:
             entities = [{
                 'text': event['trigger']['text'],
@@ -127,125 +141,14 @@ def process_ace2005_argument():
                 'type': 'trigger:{}'.format(event['event_type']),
             }]
             for argument_info in event['arguments']:
+                head = id2entity[(argument_info['start'], argument_info['end'], argument_info['entity-type'])]
                 entities.append({
-                    'text': argument_info['text'],
-                    'start': argument_info['start'],
-                    'end': argument_info['end'],
+                    'text': head['text'],
+                    'start': head['start'],
+                    'end': head['end'],
                     'type': argument_info['role'],
                 })
             outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
-    save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
-
-
-def process_ace2005_event():
-    task_name = 'ace2005_event'
-    logger.info('Processing: {}'.format(task_name))
-    output_dir = 'data/processed/{}'.format(task_name)
-    os.makedirs(output_dir, exist_ok=True)
-
-    outputs = []
-    for entry in tqdm(read_json('data/raw/ace2005event/train.json')):
-        tokens = entry['words']
-        entities = []
-        relations = []
-        for event in entry['golden-event-mentions']:
-            trigger = {
-                'text': event['trigger']['text'],
-                'start': event['trigger']['start'],
-                'end': event['trigger']['end'],
-                'type': 'trigger:{}'.format(event['event_type']),
-            }
-            if trigger in entities:
-                trigger_index = entities.index(trigger)
-            else:
-                trigger_index = len(entities)
-                entities.append(trigger)
-
-            for argument_info in event['arguments']:
-                argument = {
-                    'text': argument_info['text'],
-                    'start': argument_info['start'],
-                    'end': argument_info['end'],
-                    'type': argument_info['entity-type'],
-                }
-                if argument in entities:
-                    argument_index = entities.index(argument)
-                else:
-                    argument_index = len(entities)
-                    entities.append(argument)
-
-                relations.append({'head': argument_index, 'tail': trigger_index, 'type': argument_info['role']})
-        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
-    save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
-
-    outputs = []
-    for entry in tqdm(read_json('data/raw/ace2005event/dev.json')):
-        tokens = entry['words']
-        entities = []
-        relations = []
-        for event in entry['golden-event-mentions']:
-            trigger = {
-                'text': event['trigger']['text'],
-                'start': event['trigger']['start'],
-                'end': event['trigger']['end'],
-                'type': 'trigger:{}'.format(event['event_type']),
-            }
-            if trigger in entities:
-                trigger_index = entities.index(trigger)
-            else:
-                trigger_index = len(entities)
-                entities.append(trigger)
-
-            for argument_info in event['arguments']:
-                argument = {
-                    'text': argument_info['text'],
-                    'start': argument_info['start'],
-                    'end': argument_info['end'],
-                    'type': argument_info['entity-type'],
-                }
-                if argument in entities:
-                    argument_index = entities.index(argument)
-                else:
-                    argument_index = len(entities)
-                    entities.append(argument)
-
-                relations.append({'head': argument_index, 'tail': trigger_index, 'type': argument_info['role']})
-        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
-    save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
-
-    outputs = []
-    for entry in tqdm(read_json('data/raw/ace2005event/test.json')):
-        tokens = entry['words']
-        entities = []
-        relations = []
-        for event in entry['golden-event-mentions']:
-            trigger = {
-                'text': event['trigger']['text'],
-                'start': event['trigger']['start'],
-                'end': event['trigger']['end'],
-                'type': 'trigger:{}'.format(event['event_type']),
-            }
-            if trigger in entities:
-                trigger_index = entities.index(trigger)
-            else:
-                trigger_index = len(entities)
-                entities.append(trigger)
-
-            for argument_info in event['arguments']:
-                argument = {
-                    'text': argument_info['text'],
-                    'start': argument_info['start'],
-                    'end': argument_info['end'],
-                    'type': argument_info['entity-type'],
-                }
-                if argument in entities:
-                    argument_index = entities.index(argument)
-                else:
-                    argument_index = len(entities)
-                    entities.append(argument)
-
-                relations.append({'head': argument_index, 'tail': trigger_index, 'type': argument_info['role']})
-        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
@@ -312,101 +215,98 @@ def process_ace2005_re():
 
     outputs = []
     for entry in tqdm(read_json_lines('data/raw/ace2005_joint_er/train.json')):
-        tokens = []
-        for sentence in entry['sentences']:
-            tokens.extend(sentence)
-        entities = []
-        for block in entry['ner']:
-            for entity in block:
+        shift = 0
+        for tokens, entity_block, relation_block in zip(entry['sentences'], entry['ner'], entry['relations']):
+            entities = []
+            for start, end, e_type in entity_block:
                 entities.append({
-                    'text': ' '.join(tokens[entity[0]:entity[1] + 1]),
-                    'start': entity[0],
-                    'end': entity[1] + 1,
-                    'type': entity[-1],
+                    'text': ' '.join(tokens[start - shift:end - shift + 1]),
+                    'start': start - shift,
+                    'end': end - shift + 1,
+                    'type': e_type,
                 })
-        relations = []
-        for block in entry['relations']:
-            for relation in block:
-                head_start, head_end = relation[0], relation[1] + 1
-                tail_start, tail_end = relation[2], relation[3] + 1
+            relations = []
+            for head_start, head_end, tail_start, tail_end, r_type in relation_block:
+                head_start, head_end = head_start - shift, head_end - shift + 1
+                tail_start, tail_end = tail_start - shift, tail_end - shift + 1
                 head_entity, tail_entity = -1, -1
                 for i, entity in enumerate(entities):
                     if entity['start'] == head_start and entity['end'] == head_end:
                         head_entity = i
                     if entity['start'] == tail_start and entity['end'] == tail_end:
                         tail_entity = i
+                assert head_entity != -1 and tail_entity != -1
                 relations.append({
                     'head': head_entity,
                     'tail': tail_entity,
-                    'type': relation[-1],
+                    'type': r_type,
                 })
-        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+            shift += len(tokens)
     save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
 
     outputs = []
     for entry in tqdm(read_json_lines('data/raw/ace2005_joint_er/dev.json')):
-        tokens = []
-        for sentence in entry['sentences']:
-            tokens.extend(sentence)
-        entities = []
-        for block in entry['ner']:
-            for entity in block:
+        shift = 0
+        for tokens, entity_block, relation_block in zip(entry['sentences'], entry['ner'], entry['relations']):
+            entities = []
+            for start, end, e_type in entity_block:
                 entities.append({
-                    'text': ' '.join(tokens[entity[0]:entity[1] + 1]),
-                    'start': entity[0],
-                    'end': entity[1] + 1,
-                    'type': entity[-1],
+                    'text': ' '.join(tokens[start - shift:end - shift + 1]),
+                    'start': start - shift,
+                    'end': end - shift + 1,
+                    'type': e_type,
                 })
-        relations = []
-        for block in entry['relations']:
-            for relation in block:
-                head_start, head_end = relation[0], relation[1] + 1
-                tail_start, tail_end = relation[2], relation[3] + 1
+            relations = []
+            for head_start, head_end, tail_start, tail_end, r_type in relation_block:
+                head_start, head_end = head_start - shift, head_end - shift + 1
+                tail_start, tail_end = tail_start - shift, tail_end - shift + 1
                 head_entity, tail_entity = -1, -1
                 for i, entity in enumerate(entities):
                     if entity['start'] == head_start and entity['end'] == head_end:
                         head_entity = i
                     if entity['start'] == tail_start and entity['end'] == tail_end:
                         tail_entity = i
+                assert head_entity != -1 and tail_entity != -1
                 relations.append({
                     'head': head_entity,
                     'tail': tail_entity,
-                    'type': relation[-1],
+                    'type': r_type,
                 })
-        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+            shift += len(tokens)
     save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
 
     outputs = []
     for entry in tqdm(read_json_lines('data/raw/ace2005_joint_er/test.json')):
-        tokens = []
-        for sentence in entry['sentences']:
-            tokens.extend(sentence)
-        entities = []
-        for block in entry['ner']:
-            for entity in block:
+        shift = 0
+        for tokens, entity_block, relation_block in zip(entry['sentences'], entry['ner'], entry['relations']):
+            entities = []
+            for start, end, e_type in entity_block:
                 entities.append({
-                    'text': ' '.join(tokens[entity[0]:entity[1] + 1]),
-                    'start': entity[0],
-                    'end': entity[1] + 1,
-                    'type': entity[-1],
+                    'text': ' '.join(tokens[start - shift:end - shift + 1]),
+                    'start': start - shift,
+                    'end': end - shift + 1,
+                    'type': e_type,
                 })
-        relations = []
-        for block in entry['relations']:
-            for relation in block:
-                head_start, head_end = relation[0], relation[1] + 1
-                tail_start, tail_end = relation[2], relation[3] + 1
+            relations = []
+            for head_start, head_end, tail_start, tail_end, r_type in relation_block:
+                head_start, head_end = head_start - shift, head_end - shift + 1
+                tail_start, tail_end = tail_start - shift, tail_end - shift + 1
                 head_entity, tail_entity = -1, -1
                 for i, entity in enumerate(entities):
                     if entity['start'] == head_start and entity['end'] == head_end:
                         head_entity = i
                     if entity['start'] == tail_start and entity['end'] == tail_end:
                         tail_entity = i
+                assert head_entity != -1 and tail_entity != -1
                 relations.append({
                     'head': head_entity,
                     'tail': tail_entity,
-                    'type': relation[-1],
+                    'type': r_type,
                 })
-        outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+            shift += len(tokens)
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
@@ -1097,22 +997,21 @@ def generate_schema(root_dir):
 def main():
     init_logger(logging.INFO)
 
-    # process_ace2005_trigger()
-    # process_ace2005_argument()
-    # process_ace2005_event()
-    # process_ace2005_ner()
-    # process_ace2005_re()
-    # process_ade_re()
-    # process_conll03_ner()
-    # process_conll04_re()
-    # process_conll05_srl()
-    # process_conll12_srl()
-    # process_genia_ner()
-    # process_nyt_re()
-    # process_ontonotes_ner()
-    # process_tacred_rc()
+    process_ace2005_trigger()
+    process_ace2005_argument()
+    process_ace2005_ner()
+    process_ace2005_re()
+    process_ade_re()
+    process_conll03_ner()
+    process_conll04_re()
+    process_conll05_srl()
+    process_conll12_srl()
+    process_genia_ner()
+    process_nyt_re()
+    process_ontonotes_ner()
+    process_tacred_rc()
 
-    # generate_schema('data/processed')
+    generate_schema('data/processed')
 
 
 if __name__ == '__main__':

@@ -10,6 +10,7 @@
 
 import argparse
 import logging
+import os
 import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoConfig, AutoModelForSeq2SeqLM
@@ -27,7 +28,7 @@ def main():
     parser.add_argument("--max_src_length", default=128, type=int, help="")
     parser.add_argument("--max_tgt_length", default=128, type=int, help="")
     parser.add_argument("--batch_size", default=16, type=int, help="")
-    parser.add_argument("--with_prefix", action="store_true", help="")
+    parser.add_argument("--prefix", default=None, help="")
     parser.add_argument("--no_cuda", action="store_true", help="")
     args = parser.parse_args()
 
@@ -43,11 +44,14 @@ def main():
 
     logger.info('Processing {}'.format(args.input_file))
     entries, results = list(read_json_lines(args.input_file)), []
-    for step in tqdm(range((len(entries) + args.batch_size - 1) // args.batch_size), desc="Generating"):
+    for step in tqdm(range((len(entries) + args.batch_size - 1) // args.batch_size), desc="Inference"):
         start_index = step * args.batch_size
         end_index = min(len(entries), (step + 1) * args.batch_size)
-        if args.with_prefix:
-            batch_text = ["{} : {}".format(_['task_name'], _['source']) for _ in entries[start_index:end_index]]
+        if args.prefix is not None:
+            if args.prefix == "":
+                batch_text = ["{}: {}".format(_['task_name'], _['source']) for _ in entries[start_index:end_index]]
+            else:
+                batch_text = ["{}: {}".format(args.prefix, _['source']) for _ in entries[start_index:end_index]]
         else:
             batch_text = [_['source'] for _ in entries[start_index:end_index]]
 
@@ -70,6 +74,8 @@ def main():
         )
         for entry, gen in zip(entries[start_index:end_index], generated):
             results.append({'source': entry['source'], 'target': entry['target'], 'generated': gen})
+    output_dir = os.path.split(args.output_file)[0]
+    os.makedirs(output_dir, exist_ok=True)
     save_json_lines(results, args.output_file)
 
     logger.info("Done!")

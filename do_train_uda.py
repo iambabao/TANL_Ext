@@ -14,6 +14,7 @@ import os
 import glob
 import json
 import torch
+import torch.nn as nn
 import torch.distributed as dist
 from tqdm import tqdm
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
@@ -28,7 +29,7 @@ AdamW,
 get_linear_schedule_with_warmup,
 )
 
-from src.data_processor import DataProcessor
+from src.data_processor import DataProcessor, UDAProcessor
 from src.utils.my_utils import (
 init_logger,
 save_json,
@@ -50,15 +51,18 @@ def save_checkpoint(output_dir, model, tokenizer, args):
     torch.save(args, os.path.join(output_dir, "training_args.bin"))
 
 
-def train(args, data_processor, model, tokenizer, role):
+def train(args, data_processor, uda_processor, model, tokenizer, role):
     args.train_batch_size = args.per_device_train_batch_size * max(1, args.n_gpu)
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
     _, train_dataset = data_processor.load_and_cache_data(tokenizer, role, args.suffix)
+    _, uda_dataset = uda_processor.load_and_cache_data(tokenizer, role, args.suffix)
     if args.local_rank == 0:
         torch.distributed.barrier()
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+    uda_sampler = RandomSampler(uda_dataset) if args.local_rank == -1 else DistributedSampler(uda_dataset)
+    uda_dataloader = DataLoader(uda_dataset, sampler=uda_sampler, batch_size=args.train_batch_size)
 
     if args.max_steps > 0:
         t_total = args.max_steps
@@ -115,25 +119,46 @@ def train(args, data_processor, model, tokenizer, role):
     model.zero_grad()
     for _ in range(int(args.num_train_epochs)):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
-        for step, batch in enumerate(epoch_iterator):
+        for step, (batch, uda_batch) in enumerate(zip(epoch_iterator, uda_dataloader)):
             model.train()
 
+            # supervised
             inputs = {
                 "input_ids": batch[0].to(args.device),
                 "attention_mask": batch[1].to(args.device),
                 "labels": batch[-1].to(args.device),
             }
             outputs = model(**inputs)
-            loss = outputs["loss"]
-
+            s_loss = outputs["loss"]
             if args.n_gpu > 1:
-                loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
+                s_loss = s_loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
+
+            # unsupervised
+            with torch.no_grad():
+                inputs = {
+                    "input_ids": uda_batch[0].to(args.device),
+                    "attention_mask": uda_batch[1].to(args.device),
+                    "labels": uda_batch[-1].to(args.device),
+                }
+                a_outputs = model(**inputs)
+                a_logits = a_outputs["logits"]
+            inputs["input_ids"] = uda_batch[2].to(args.device)
+            inputs["attention_mask"] = uda_batch[3].to(args.device)
+            b_outputs = model(**inputs)
+            b_logits = b_outputs["logits"]
+            kl_function = nn.KLDivLoss(reduction='none')
+            u_loss = kl_function(torch.log_softmax(b_logits, dim=-1), torch.softmax(a_logits, dim=-1))
+            u_loss = torch.mean(torch.sum(u_loss, dim=-1))
+
+            loss = s_loss + u_loss
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
             loss.backward()
 
             training_loss += loss.item()
-            description = "Global step: {:>6d}, Loss: {:>.4f}".format(global_step, loss.item())
+            description = "Global step: {:>6d}, Loss: {:>.4f} (s_loss: {:>.4f} u_loss: {:>.4f})".format(
+                global_step, loss.item(), s_loss.item(), u_loss.item(),
+            )
             epoch_iterator.set_description(description)
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
@@ -146,6 +171,7 @@ def train(args, data_processor, model, tokenizer, role):
                 if args.local_rank in [-1, 0]:
                     if args.logging_steps > 0 and global_step % args.logging_steps == 0:
                         logger.info(description)
+
                         if args.evaluate_during_training:
                             results = evaluate(
                                 args,
@@ -286,6 +312,12 @@ def main():
         help="The input data dir. Should contain the .tsv files (or other data files) for the task.",
     )
     parser.add_argument(
+        "--augmented_data_dir",
+        type=str,
+        required=True,
+        help="The input augmented data directory that contains the unlabeled data.",
+    )
+    parser.add_argument(
         "--output_dir",
         type=str,
         required=True,
@@ -415,6 +447,15 @@ def main():
         do_lower_case=args.do_lower_case,
         overwrite_cache=args.overwrite_cache,
     )
+    uda_processor = UDAProcessor(
+        args.model_name_or_path,
+        args.max_src_length,
+        args.max_tgt_length,
+        data_dir=args.augmented_data_dir,
+        with_prefix=args.with_prefix,
+        do_lower_case=args.do_lower_case,
+        overwrite_cache=args.overwrite_cache,
+    )
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
     config = AutoConfig.from_pretrained(
@@ -465,7 +506,7 @@ def main():
         for n, p in model.named_parameters():
             logger.info("{} (size: {} requires_grad: {})".format(n, p.size(), p.requires_grad))
 
-        global_step, training_loss = train(args, data_processor, model, tokenizer, role="train")
+        global_step, training_loss = train(args, data_processor, uda_processor, model, tokenizer, role="train")
         logger.info("global_step = %s, average loss = %s", global_step, training_loss)
 
     # Evaluation - we can ask to evaluate all the checkpoints (sub-directories) in a directory

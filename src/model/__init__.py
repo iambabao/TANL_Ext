@@ -8,4 +8,4 @@
 @Last modified date : 2020/7/26
 """
 
-from .t5_prompt import T5WithPrompt
+from .hf_t5 import T5ForConditionalGeneration

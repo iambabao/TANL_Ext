@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-@Author             : huggingface
+@Author             :
 @Date               : 2020/7/26
 @Desc               :
 @Last modified by   : Bao

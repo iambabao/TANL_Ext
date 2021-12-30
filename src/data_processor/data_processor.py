@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class InputExample(object):
-    def __init__(self, guid, source, target, task_name=None):
+    def __init__(self, guid, source, target, task_name):
         self.guid = guid
         self.source = source
         self.target = target
@@ -104,27 +104,33 @@ def convert_examples_to_features(examples, tokenizer, max_src_length=None, max_t
 class DataProcessor:
     def __init__(
             self,
+            tasks,
             model_name_or_path,
             max_src_length,
             max_tgt_length,
-            tasks,
             data_dir="",
             cache_dir="cache",
             with_prefix=False,
+            do_lower_case=False,
             overwrite_cache=False
     ):
+        self.tasks = tasks
         self.model_name_or_path = model_name_or_path
         self.max_src_length = max_src_length
         self.max_tgt_length = max_tgt_length
 
-        self.tasks = tasks
         self.data_dir = data_dir
-        self.cache_dir = "{}_{}".format(cache_dir, "raw" if not with_prefix else "prefix")
-        self.with_prefix = with_prefix
+        self.cache_dir = "{}_{}_{}".format(
+            cache_dir,
+            "raw" if not with_prefix else "prefix",
+            "uncased" if do_lower_case else "cased",
+        )
 
+        self.do_lower_case = do_lower_case
+        self.with_prefix = with_prefix
         self.overwrite_cache = overwrite_cache
 
-    def load_and_cache_data(self, role, tokenizer, suffix=None):
+    def load_and_cache_data(self, tokenizer, role, suffix=None):
         if suffix is not None:
             role = "{}_{}".format(role, suffix)
 
