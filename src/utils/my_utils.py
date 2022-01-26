@@ -169,6 +169,28 @@ def is_trigger(entity):
     return False
 
 
+def format_data(tokens, entities, relations):
+    entities = [
+        {'text': ' '.join(tokens[start:end]), 'start': start, 'end': end, 'type': d_type}
+        for d_type, start, end in entities
+    ]
+    entities = sorted(entities, key=lambda x: (x['start'], x['end']))
+
+    relations = [
+        {
+            'head': ' '.join(tokens[h_start:h_end]),
+            'tail': ' '.join(tokens[t_start:t_end]),
+            'h_start': h_start, 'h_end': h_end, 'h_type': h_type,
+            't_start': t_start, 't_end': t_end, 't_type': t_type,
+            'type': d_type
+        }
+        for d_type, (h_type, h_start, h_end), (t_type, t_start, t_end) in relations
+    ]
+    relations = sorted(relations, key=lambda x: (x['h_start'], x['h_end'], x['t_start'], x['t_end']))
+
+    return entities, relations
+
+
 def generate_outputs(outputs, tokenizer):
     generated = []
     for line in outputs:

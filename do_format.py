@@ -14,7 +14,7 @@ import os
 from transformers import AutoTokenizer
 
 from src.data_processor import load_my_dataset as load_dataset
-from src.utils.my_utils import init_logger, save_json_lines
+from src.utils.my_utils import init_logger, save_json, save_json_lines, format_data
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 def main():
     # parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tokenizer_name", type=str, default="", help="")
-    parser.add_argument("--cache_dir", type=str, default=None, help="")
+    parser.add_argument('--tokenizer_name', type=str, default='', help='')
+    parser.add_argument('--cache_dir', type=str, default=None, help='')
     parser.add_argument('--data_dir', type=str, required=True, help='')
     parser.add_argument('--dataset_name', type=str, required=True, help='')
     parser.add_argument('--dataset_split', type=str, required=True, help='')
@@ -39,8 +39,8 @@ def main():
     parser.add_argument('--overwrite_cache', type=bool, default=True, help='')
     parser.add_argument('--input_format', type=str, default=None, help='')
     parser.add_argument('--output_format', type=str, default=None, help='')
-    parser.add_argument("--multitask", action='store_true', help="")
-    parser.add_argument('--output_dir', type=str, default="", help='')
+    parser.add_argument('--multitask', action='store_true', help='')
+    parser.add_argument('--output_dir', type=str, default='', help='')
     args = parser.parse_args()
 
     # the order is slightly different from original code
@@ -58,14 +58,15 @@ def main():
 
     # setup logging
     init_logger(logging.INFO)
+    logger.info('args: {}'.format(args))
 
-    logger.info("Loading tokenizer")
+    logger.info('Loading tokenizer')
     tokenizer = AutoTokenizer.from_pretrained(
         args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
         cache_dir=args.cache_dir,
     )
 
-    logger.info("Loading dataset")
+    logger.info('Loading dataset')
     dataset = load_dataset(
         dataset_name=args.dataset_name,
         data_args=args,
@@ -81,9 +82,24 @@ def main():
     for source, target in zip(dataset.input_sentences, dataset.output_sentences):
         outputs.append({"source": source, "target": target, 'task_name': args.dataset_name})
 
+    formatted_outputs = []
+    for example in dataset.examples:
+        tokens = example.tokens
+        entities = [(e.type.natural, e.start, e.end) for e in example.entities]
+        relations = [
+            (
+                r.type.natural,
+                (r.head.type.natural, r.head.start, r.head.end),
+                (r.tail.type.natural, r.tail.start, r.tail.end),
+            ) for r in example.relations
+        ]
+        entities, relations = format_data(tokens, entities, relations)
+        formatted_outputs.append({'context': ' '.join(tokens), 'entities': entities, 'relations': relations})
+
     output_dir = os.path.join(args.output_dir, args.dataset_name)
     os.makedirs(output_dir, exist_ok=True)
     save_json_lines(outputs, os.path.join(output_dir, 'data_{}.json'.format(args.dataset_split)))
+    save_json(formatted_outputs, os.path.join(output_dir, 'data_{}.formatted.json'.format(args.dataset_split)))
 
 
 if __name__ == "__main__":

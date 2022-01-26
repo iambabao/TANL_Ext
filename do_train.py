@@ -9,6 +9,7 @@
 """
 
 import argparse
+import configparser
 import logging
 import os
 import glob
@@ -139,7 +140,7 @@ def train(args, data_processor, model, tokenizer, role):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
                 optimizer.step()
-                scheduler.step()  # Update learning rate schedule
+                scheduler.step()
                 model.zero_grad()
                 global_step += 1
 
@@ -364,6 +365,12 @@ def main():
     parser.add_argument("--local_rank", type=int, default=-1, help="local_rank for distributed training on gpus")
     args = parser.parse_args()
 
+    training_config = configparser.ConfigParser(allow_no_value=False)
+    training_config.read("config.temp.ini")
+    if args.tasks in training_config:
+        if "num_train_epochs" in training_config[args.tasks]:
+            args.num_train_epochs = int(training_config[args.tasks]["num_train_epochs"])
+
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
@@ -380,11 +387,13 @@ def main():
         os.makedirs(args.log_dir, exist_ok=True)
         args.log_file = os.path.join(
             args.log_dir,
-            "{}_{}_{}_{}.txt".format(
+            "{}_{}_{}_{}_{}_{:.1e}.txt".format(
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
                 "raw" if not args.with_prefix else "prefix",
+                "uncased" if args.do_lower_case else "cased",
+                args.learning_rate,
             ),
         )
     else:

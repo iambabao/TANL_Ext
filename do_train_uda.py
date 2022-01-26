@@ -9,12 +9,12 @@
 """
 
 import argparse
+import configparser
 import logging
 import os
 import glob
 import json
 import torch
-import torch.nn as nn
 import torch.distributed as dist
 from tqdm import tqdm
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
@@ -51,12 +51,18 @@ def save_checkpoint(output_dir, model, tokenizer, args):
     torch.save(args, os.path.join(output_dir, "training_args.bin"))
 
 
+def consistency_loss_function(logits, target):
+    x = torch.log_softmax(logits, dim=-1)
+    y = torch.softmax(target, dim=-1)
+    return -torch.mean(torch.sum((x * y), dim=-1))
+
+
 def train(args, data_processor, uda_processor, model, tokenizer, role):
     args.train_batch_size = args.per_device_train_batch_size * max(1, args.n_gpu)
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
     _, train_dataset = data_processor.load_and_cache_data(tokenizer, role, args.suffix)
-    _, uda_dataset = uda_processor.load_and_cache_data(tokenizer, role, args.suffix)
+    _, uda_dataset = uda_processor.load_and_cache_data(tokenizer, ",".join(args.tasks), args.suffix)
     if args.local_rank == 0:
         torch.distributed.barrier()
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
@@ -134,21 +140,25 @@ def train(args, data_processor, uda_processor, model, tokenizer, role):
                 s_loss = s_loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
 
             # unsupervised
-            with torch.no_grad():
+            if (step + 1) % args.constrain_step == 0:
+                with torch.no_grad():
+                    inputs = {
+                        "input_ids": uda_batch[0].to(args.device),
+                        "attention_mask": uda_batch[1].to(args.device),
+                        "labels": uda_batch[-1].to(args.device),
+                    }
+                    a_outputs = model(**inputs)
+                    a_logits = a_outputs["logits"]
                 inputs = {
-                    "input_ids": uda_batch[0].to(args.device),
-                    "attention_mask": uda_batch[1].to(args.device),
+                    "input_ids": uda_batch[2].to(args.device),
+                    "attention_mask": uda_batch[3].to(args.device),
                     "labels": uda_batch[-1].to(args.device),
                 }
-                a_outputs = model(**inputs)
-                a_logits = a_outputs["logits"]
-            inputs["input_ids"] = uda_batch[2].to(args.device)
-            inputs["attention_mask"] = uda_batch[3].to(args.device)
-            b_outputs = model(**inputs)
-            b_logits = b_outputs["logits"]
-            kl_function = nn.KLDivLoss(reduction='none')
-            u_loss = kl_function(torch.log_softmax(b_logits, dim=-1), torch.softmax(a_logits, dim=-1))
-            u_loss = torch.mean(torch.sum(u_loss, dim=-1))
+                b_outputs = model(**inputs)
+                b_logits = b_outputs["logits"]
+                u_loss = args.alpha * consistency_loss_function(b_logits, a_logits)
+            else:
+                u_loss = torch.zeros_like(s_loss)
 
             loss = s_loss + u_loss
             if args.gradient_accumulation_steps > 1:
@@ -164,7 +174,7 @@ def train(args, data_processor, uda_processor, model, tokenizer, role):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
                 optimizer.step()
-                scheduler.step()  # Update learning rate schedule
+                scheduler.step()
                 model.zero_grad()
                 global_step += 1
 
@@ -362,6 +372,8 @@ def main():
         default=1,
         help="Number of updates steps to accumulate before performing a backward/update pass.",
     )
+    parser.add_argument("--constrain_step", default=1, type=int, help="")
+    parser.add_argument("--alpha", default=1.0, type=float, help="")
     parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight deay if we apply some.")
     parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
@@ -407,16 +419,26 @@ def main():
         args.n_gpu = 1
     args.device = device
 
+    training_config = configparser.ConfigParser(allow_no_value=False)
+    training_config.read("config.temp.ini")
+    if args.tasks in training_config:
+        if "num_train_epochs" in training_config[args.tasks]:
+            args.num_train_epochs = int(training_config[args.tasks]["num_train_epochs"])
+
     # Setup log dir
     if args.local_rank in [-1, 0] and args.log_file is None and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
         args.log_file = os.path.join(
             args.log_dir,
-            "{}_{}_{}_{}.txt".format(
+            "{}_{}_{}_{}_{:1.2f}_{}_{}_{:.1e}.txt".format(
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
+                args.constrain_step,
+                args.alpha,
                 "raw" if not args.with_prefix else "prefix",
+                "uncased" if args.do_lower_case else "cased",
+                args.learning_rate,
             ),
         )
     else:
@@ -477,10 +499,12 @@ def main():
     if args.do_train:
         args.output_dir = os.path.join(
             args.output_dir,
-            "{}_{}_{}_{}_{}_{:.1e}".format(
+            "{}_{}_{}_{}_{:1.2f}_{}_{}_{:.1e}".format(
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
+                args.constrain_step,
+                args.alpha,
                 "raw" if not args.with_prefix else "prefix",
                 "uncased" if args.do_lower_case else "cased",
                 args.learning_rate,
