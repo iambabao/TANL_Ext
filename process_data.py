@@ -219,12 +219,8 @@ def process_ace2005_re():
         for tokens, entity_block, relation_block in zip(entry['sentences'], entry['ner'], entry['relations']):
             entities = []
             for start, end, e_type in entity_block:
-                entities.append({
-                    'text': ' '.join(tokens[start - shift:end - shift + 1]),
-                    'start': start - shift,
-                    'end': end - shift + 1,
-                    'type': e_type,
-                })
+                start, end = start - shift, end - shift + 1
+                entities.append({'text': ' '.join(tokens[start:end]), 'start': start, 'end': end, 'type': e_type,})
             relations = []
             for head_start, head_end, tail_start, tail_end, r_type in relation_block:
                 head_start, head_end = head_start - shift, head_end - shift + 1
@@ -236,13 +232,10 @@ def process_ace2005_re():
                     if entity['start'] == tail_start and entity['end'] == tail_end:
                         tail_entity = i
                 assert head_entity != -1 and tail_entity != -1
-                relations.append({
-                    'head': head_entity,
-                    'tail': tail_entity,
-                    'type': r_type,
-                })
-            outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+                relations.append({'head': head_entity, 'tail': tail_entity, 'type': r_type})
             shift += len(tokens)
+            if len(entities) == 0: continue
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
     save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
 
     outputs = []
@@ -251,12 +244,8 @@ def process_ace2005_re():
         for tokens, entity_block, relation_block in zip(entry['sentences'], entry['ner'], entry['relations']):
             entities = []
             for start, end, e_type in entity_block:
-                entities.append({
-                    'text': ' '.join(tokens[start - shift:end - shift + 1]),
-                    'start': start - shift,
-                    'end': end - shift + 1,
-                    'type': e_type,
-                })
+                start, end = start - shift, end - shift + 1
+                entities.append({'text': ' '.join(tokens[start:end]), 'start': start, 'end': end, 'type': e_type,})
             relations = []
             for head_start, head_end, tail_start, tail_end, r_type in relation_block:
                 head_start, head_end = head_start - shift, head_end - shift + 1
@@ -268,13 +257,10 @@ def process_ace2005_re():
                     if entity['start'] == tail_start and entity['end'] == tail_end:
                         tail_entity = i
                 assert head_entity != -1 and tail_entity != -1
-                relations.append({
-                    'head': head_entity,
-                    'tail': tail_entity,
-                    'type': r_type,
-                })
-            outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+                relations.append({'head': head_entity, 'tail': tail_entity, 'type': r_type})
             shift += len(tokens)
+            if len(entities) == 0: continue
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
     save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
 
     outputs = []
@@ -283,12 +269,8 @@ def process_ace2005_re():
         for tokens, entity_block, relation_block in zip(entry['sentences'], entry['ner'], entry['relations']):
             entities = []
             for start, end, e_type in entity_block:
-                entities.append({
-                    'text': ' '.join(tokens[start - shift:end - shift + 1]),
-                    'start': start - shift,
-                    'end': end - shift + 1,
-                    'type': e_type,
-                })
+                start, end = start - shift, end - shift + 1
+                entities.append({'text': ' '.join(tokens[start:end]), 'start': start, 'end': end, 'type': e_type,})
             relations = []
             for head_start, head_end, tail_start, tail_end, r_type in relation_block:
                 head_start, head_end = head_start - shift, head_end - shift + 1
@@ -300,13 +282,10 @@ def process_ace2005_re():
                     if entity['start'] == tail_start and entity['end'] == tail_end:
                         tail_entity = i
                 assert head_entity != -1 and tail_entity != -1
-                relations.append({
-                    'head': head_entity,
-                    'tail': tail_entity,
-                    'type': r_type,
-                })
-            outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
+                relations.append({'head': head_entity, 'tail': tail_entity, 'type': r_type})
             shift += len(tokens)
+            if len(entities) == 0: continue
+            outputs.append({'tokens': tokens, 'entities': entities, 'relations': relations, 'task_name': task_name})
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
@@ -846,91 +825,45 @@ def process_nyt_re():
 
 
 def process_ontonotes_ner():
-    def _process(_tokens, _tags):
-        _entities = []
-        _start, _type = -1, None
-        for _i, _tag in enumerate(_tags):
-            if _tag.startswith('B'):
-                _prefix, _suffix = _tag[0], _tag[2:]
-                if _type is None:
-                    _start, _type = _i, _suffix
-                else:
-                    _entities.append({
-                        'text': ' '.join(_tokens[_start:_i]),
-                        'start': _start,
-                        'end': _i,
-                        'type': _type,
-                    })
-                    _start, _type = _i, _suffix
-            elif _tag.startswith('O') and _type is not None:
-                _entities.append({
-                    'text': ' '.join(_tokens[_start:_i]),
-                    'start': _start,
-                    'end': _i,
-                    'type': _type,
-                })
-                _start, _type = -1, None
-        if _type is not None:
-            _entities.append({
-                'text': ' '.join(_tokens[_start:len(_tokens)]),
-                'start': _start,
-                'end': len(_tokens),
-                'type': _type,
-            })
-            _start, _type = -1, None
-        return _entities
-
     task_name = 'ontonotes_ner'
     logger.info('Processing: {}'.format(task_name))
     output_dir = 'data/processed/{}'.format(task_name)
     os.makedirs(output_dir, exist_ok=True)
 
     outputs = []
-    tokens, tags = [], []
-    for line in tqdm(read_file('data/raw/ontonotes/train.txt')):
-        line = line.strip()
-        if len(line) == 0:
-            if len(tokens) == 0:
-                continue
-            entities = _process(tokens, tags)
+    for entry in tqdm(read_json_lines('data/raw/ontonotes/train.json')):
+        shift = 0
+        for tokens, ner in zip(entry['sentences'], entry['ner']):
+            entities = []
+            for start, end, entity_type in ner:
+                start, end = start - shift, end - shift + 1
+                entities.append({'text': ' '.join(tokens[start:end]), 'start': start, 'end': end, 'type': entity_type})
+            shift += len(tokens)
             outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
-            tokens, tags = [], []
-        else:
-            token, _, _, tag = line.split()
-            tokens.append(token)
-            tags.append(tag)
     save_json_lines(outputs, os.path.join(output_dir, 'data_train.json'))
 
     outputs = []
-    tokens, tags = [], []
-    for line in tqdm(read_file('data/raw/ontonotes/dev.txt')):
-        line = line.strip()
-        if len(line) == 0:
-            if len(tokens) == 0:
-                continue
-            entities = _process(tokens, tags)
+    for entry in tqdm(read_json_lines('data/raw/ontonotes/dev.json')):
+        shift = 0
+        for tokens, ner in zip(entry['sentences'], entry['ner']):
+            entities = []
+            for start, end, entity_type in ner:
+                start, end = start - shift, end - shift + 1
+                entities.append({'text': ' '.join(tokens[start:end]), 'start': start, 'end': end, 'type': entity_type})
+            shift += len(tokens)
             outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
-            tokens, tags = [], []
-        else:
-            token, _, _, tag = line.split()
-            tokens.append(token)
-            tags.append(tag)
     save_json_lines(outputs, os.path.join(output_dir, 'data_valid.json'))
 
     outputs = []
-    tokens, tags = [], []
-    for line in tqdm(read_file('data/raw/ontonotes/test.txt')):
-        line = line.strip()
-        if len(line) == 0:
-            if len(tokens) == 0:
-                continue
-            entities = _process(tokens, tags)
+    for entry in tqdm(read_json_lines('data/raw/ontonotes/test.json')):
+        shift = 0
+        for tokens, ner in zip(entry['sentences'], entry['ner']):
+            entities = []
+            for start, end, entity_type in ner:
+                start, end = start - shift, end - shift + 1
+                entities.append({'text': ' '.join(tokens[start:end]), 'start': start, 'end': end, 'type': entity_type})
+            shift += len(tokens)
             outputs.append({'tokens': tokens, 'entities': entities, 'relations': [], 'task_name': task_name})
-            tokens, tags = [], []
-        else:
-            token, _, _, tag = line.split()
-            tokens.append(token)
-            tags.append(tag)
     save_json_lines(outputs, os.path.join(output_dir, 'data_test.json'))
 
 
@@ -997,19 +930,19 @@ def generate_schema(root_dir):
 def main():
     init_logger(logging.INFO)
 
-    process_ace2005_trigger()
-    process_ace2005_argument()
-    process_ace2005_ner()
+    # process_ace2005_trigger()
+    # process_ace2005_argument()
+    # process_ace2005_ner()
     process_ace2005_re()
-    process_ade_re()
-    process_conll03_ner()
-    process_conll04_re()
-    process_conll05_srl()
-    process_conll12_srl()
-    process_genia_ner()
-    process_nyt_re()
+    # process_ade_re()
+    # process_conll03_ner()
+    # process_conll04_re()
+    # process_conll05_srl()
+    # process_conll12_srl()
+    # process_genia_ner()
+    # process_nyt_re()
     process_ontonotes_ner()
-    process_tacred_rc()
+    # process_tacred_rc()
 
     generate_schema('data/processed')
 

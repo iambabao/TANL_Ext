@@ -52,9 +52,11 @@ def save_checkpoint(output_dir, model, tokenizer, args):
 
 
 def consistency_loss_function(logits, target):
+    loss_fun = torch.nn.KLDivLoss(reduction="none")
     x = torch.log_softmax(logits, dim=-1)
     y = torch.softmax(target, dim=-1)
-    return -torch.mean(torch.sum((x * y), dim=-1))
+    loss = torch.mean(torch.sum(loss_fun(x, y), dim=-1))
+    return loss
 
 
 def train(args, data_processor, uda_processor, model, tokenizer, role):
@@ -68,13 +70,13 @@ def train(args, data_processor, uda_processor, model, tokenizer, role):
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
     uda_sampler = RandomSampler(uda_dataset) if args.local_rank == -1 else DistributedSampler(uda_dataset)
-    uda_dataloader = DataLoader(uda_dataset, sampler=uda_sampler, batch_size=args.train_batch_size)
+    uda_dataloader = DataLoader(uda_dataset, sampler=uda_sampler, batch_size=args.train_batch_size // 2)
 
     if args.max_steps > 0:
         t_total = args.max_steps
-        args.num_train_epochs = args.max_steps // (len(train_dataloader) // args.gradient_accumulation_steps) + 1
+        args.num_train_epochs = args.max_steps // len(train_dataloader) + 1
     else:
-        t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
+        t_total = len(train_dataloader) * args.num_train_epochs
 
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ["bias", "LayerNorm.weight"]
@@ -109,12 +111,10 @@ def train(args, data_processor, uda_processor, model, tokenizer, role):
     logger.info("Num Epochs = %d", args.num_train_epochs)
     logger.info("Instantaneous batch size per GPU = %d", args.per_device_train_batch_size)
     logger.info(
-        "Total train batch size (w. parallel, accumulation & distributed) = %d",
+        "Total train batch size (w. parallel & distributed) = %d",
         args.train_batch_size
-        * args.gradient_accumulation_steps
         * (torch.distributed.get_world_size() if args.local_rank != -1 else 1),
     )
-    logger.info("Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logger.info("Total optimization steps = %d", t_total)
 
     global_step = 0
@@ -125,88 +125,90 @@ def train(args, data_processor, uda_processor, model, tokenizer, role):
     model.zero_grad()
     for _ in range(int(args.num_train_epochs)):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
-        for step, (batch, uda_batch) in enumerate(zip(epoch_iterator, uda_dataloader)):
+        for batch, uda_batch in zip(epoch_iterator, uda_dataloader):
             model.train()
 
-            # supervised
             inputs = {
                 "input_ids": batch[0].to(args.device),
                 "attention_mask": batch[1].to(args.device),
                 "labels": batch[-1].to(args.device),
             }
             outputs = model(**inputs)
-            s_loss = outputs["loss"]
+            loss = outputs["loss"]
             if args.n_gpu > 1:
-                s_loss = s_loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
+                loss = loss.mean()
 
-            # unsupervised
-            if (step + 1) % args.constrain_step == 0:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+            optimizer.step()
+            scheduler.step()
+            model.zero_grad()
+
+            global_step += 1
+            training_loss += loss.item()
+            description = "Global step: {:>6d}, Loss: {:>.4f}".format(global_step, loss.item())
+            epoch_iterator.set_description(description)
+
+            # UDA
+            if args.beta > 0 and global_step % args.beta == 0:
                 with torch.no_grad():
-                    inputs = {
+                    a_inputs = {
                         "input_ids": uda_batch[0].to(args.device),
                         "attention_mask": uda_batch[1].to(args.device),
                         "labels": uda_batch[-1].to(args.device),
                     }
-                    a_outputs = model(**inputs)
+                    a_outputs = model(**a_inputs)
                     a_logits = a_outputs["logits"]
-                inputs = {
+                    a_logits = a_logits / args.temperature
+                b_inputs = {
                     "input_ids": uda_batch[2].to(args.device),
                     "attention_mask": uda_batch[3].to(args.device),
                     "labels": uda_batch[-1].to(args.device),
                 }
-                b_outputs = model(**inputs)
+                b_outputs = model(**b_inputs)
                 b_logits = b_outputs["logits"]
-                u_loss = args.alpha * consistency_loss_function(b_logits, a_logits)
-            else:
-                u_loss = torch.zeros_like(s_loss)
+                uda_loss = args.alpha * consistency_loss_function(b_logits, a_logits)
+                if args.n_gpu > 1:
+                    uda_loss = uda_loss.mean()
 
-            loss = s_loss + u_loss
-            if args.gradient_accumulation_steps > 1:
-                loss = loss / args.gradient_accumulation_steps
-            loss.backward()
-
-            training_loss += loss.item()
-            description = "Global step: {:>6d}, Loss: {:>.4f} (s_loss: {:>.4f} u_loss: {:>.4f})".format(
-                global_step, loss.item(), s_loss.item(), u_loss.item(),
-            )
-            epoch_iterator.set_description(description)
-            if (step + 1) % args.gradient_accumulation_steps == 0:
+                uda_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-
                 optimizer.step()
                 scheduler.step()
                 model.zero_grad()
-                global_step += 1
 
-                if args.local_rank in [-1, 0]:
-                    if args.logging_steps > 0 and global_step % args.logging_steps == 0:
-                        logger.info(description)
+                description = "Global step: {:>6d}, UDA Loss: {:>.4f}".format(global_step, uda_loss.item())
+                epoch_iterator.set_description(description)
 
-                        if args.evaluate_during_training:
-                            results = evaluate(
-                                args,
-                                data_processor,
-                                model.module if hasattr(model, "module") else model,
-                                tokenizer,
-                                role="valid",
-                                prefix=str(global_step)
-                            )
-                            current_score, best_score = results["Bleu_4"], max(best_score, results["Bleu_4"])
-                            if current_score >= best_score:
-                                early_stop_flag = 0
-                                output_dir = os.path.join(args.output_dir, "checkpoint-best")
-                                save_checkpoint(output_dir, model, tokenizer, args)
-                            else:
-                                early_stop_flag += 1
-                                save_checkpoint(args.output_dir, model, tokenizer, args)
-                            if 0 < args.early_stop < early_stop_flag:
-                                break
-
-                    if not args.save_best and args.save_steps > 0 and global_step % args.save_steps == 0:
+            if args.local_rank in [-1, 0]:
+                if args.logging_steps > 0 and global_step % args.logging_steps == 0:
+                    if args.evaluate_during_training:
+                        results = evaluate(
+                            args,
+                            data_processor,
+                            model.module if hasattr(model, "module") else model,
+                            tokenizer,
+                            role="valid",
+                            prefix=str(global_step)
+                        )
+                        current_score, best_score = results["Bleu_4"], max(best_score, results["Bleu_4"])
+                        if current_score >= best_score:
+                            early_stop_flag = 0
+                            output_dir = os.path.join(args.output_dir, "checkpoint-best")
+                            save_checkpoint(output_dir, model, tokenizer, args)
+                        else:
+                            early_stop_flag += 1
+                            save_checkpoint(args.output_dir, model, tokenizer, args)
+                        if 0 < args.early_stop < early_stop_flag:
+                            break
+                    elif args.save_all_checkpoints:
                         output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(global_step))
                         save_checkpoint(output_dir, model, tokenizer, args)
-                if args.local_rank != -1:
-                    torch.distributed.barrier()  # wait for evaluation if needed
+                    else:
+                        save_checkpoint(args.output_dir, model, tokenizer, args)
+
+            if args.local_rank != -1:
+                torch.distributed.barrier()  # wait for evaluation if needed
 
             if 0 < args.early_stop < early_stop_flag or 0 < args.max_steps < global_step:
                 epoch_iterator.close()
@@ -365,15 +367,10 @@ def main():
     parser.add_argument(
         "--per_device_eval_batch_size", default=8, type=int, help="Batch size per GPU/CPU for evaluation."
     )
-    parser.add_argument("--learning_rate", default=5e-5, type=float, help="The initial learning rate for Adam.")
-    parser.add_argument(
-        "--gradient_accumulation_steps",
-        type=int,
-        default=1,
-        help="Number of updates steps to accumulate before performing a backward/update pass.",
-    )
-    parser.add_argument("--constrain_step", default=1, type=int, help="")
     parser.add_argument("--alpha", default=1.0, type=float, help="")
+    parser.add_argument("--beta", default=1, type=int, help="")
+    parser.add_argument("--temperature", default=1.0, type=float, help="")
+    parser.add_argument("--learning_rate", default=5e-5, type=float, help="The initial learning rate for Adam.")
     parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight deay if we apply some.")
     parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
@@ -395,8 +392,8 @@ def main():
     )
 
     # Other parameters
-    parser.add_argument("--logging_steps", type=int, default=50, help="Log every X updates steps.")
-    parser.add_argument("--save_steps", type=int, default=50, help="Save checkpoint every X updates steps.")
+    parser.add_argument("--logging_steps", type=int, default=0, help="Log every X updates steps.")
+    parser.add_argument("--save_all_checkpoints", action="store_true", help="Whether not to save all checkpoints")
     parser.add_argument("--no_cuda", action="store_true", help="Whether not to use CUDA when available")
     parser.add_argument(
         "--overwrite_output_dir", action="store_true", help="Overwrite the content of the output directory"
@@ -430,14 +427,15 @@ def main():
         os.makedirs(args.log_dir, exist_ok=True)
         args.log_file = os.path.join(
             args.log_dir,
-            "{}_{}_{}_{}_{:1.2f}_{}_{}_{:.1e}.txt".format(
+            "{}_{}_{}_{}_{}_{:.2f}_{}_{:.1f}_{:.1e}.txt".format(
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
-                args.constrain_step,
-                args.alpha,
                 "raw" if not args.with_prefix else "prefix",
                 "uncased" if args.do_lower_case else "cased",
+                args.alpha,
+                args.beta,
+                args.temperature,
                 args.learning_rate,
             ),
         )
@@ -499,14 +497,15 @@ def main():
     if args.do_train:
         args.output_dir = os.path.join(
             args.output_dir,
-            "{}_{}_{}_{}_{:1.2f}_{}_{}_{:.1e}".format(
+            "{}_{}_{}_{}_{}_{:.2f}_{}_{:.1f}_{:.1e}".format(
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
-                args.constrain_step,
-                args.alpha,
                 "raw" if not args.with_prefix else "prefix",
                 "uncased" if args.do_lower_case else "cased",
+                args.alpha,
+                args.beta,
+                args.temperature,
                 args.learning_rate,
             ),
         )
