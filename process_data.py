@@ -11,6 +11,7 @@
 import logging
 import os
 import re
+from collections import defaultdict
 from tqdm import tqdm
 
 from src.utils.my_utils import init_logger, read_file, save_file, read_json, save_json, read_json_lines, save_json_lines
@@ -933,7 +934,7 @@ def main():
     # process_ace2005_trigger()
     # process_ace2005_argument()
     # process_ace2005_ner()
-    process_ace2005_re()
+    # process_ace2005_re()
     # process_ade_re()
     # process_conll03_ner()
     # process_conll04_re()
@@ -941,10 +942,10 @@ def main():
     # process_conll12_srl()
     # process_genia_ner()
     # process_nyt_re()
-    process_ontonotes_ner()
+    # process_ontonotes_ner()
     # process_tacred_rc()
 
-    generate_schema('data/processed')
+    # generate_schema('data/processed')
 
 
 if __name__ == '__main__':

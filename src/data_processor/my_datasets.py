@@ -45,7 +45,7 @@ class BasicBaseDataset(BaseDataset):
     natural_relation_types = None
 
     default_input_format = 'plain'
-    default_output_format = 'basic'
+    default_output_format = 'full'
 
     def load_cached_data(self, cached_file):
         d = torch.load(cached_file)
