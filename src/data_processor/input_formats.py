@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 
 from src.data_processor.input_example import InputExample
 from src.utils.tanl_utils import augment_sentence
-from src.utils.my_utils import is_trigger
 
 INPUT_FORMATS = {}
 
@@ -25,9 +24,9 @@ class BaseInputFormat(ABC):
     RELATION_SEPARATOR_TOKEN = '='
     QUERY_SEPARATOR_TOKEN = ':'
 
-    def format_input(self, example: InputExample, multitask=False, task_descriptor=None):
+    def format_input(self, example: InputExample, prefix=False, task_descriptor=None):
         res = self._format_input(example=example)
-        if multitask:
+        if prefix:
             name = task_descriptor or example.dataset.task_descriptor or example.dataset.name
             res = f'{name} {self.QUERY_SEPARATOR_TOKEN} ' + res
         return res
@@ -56,10 +55,7 @@ class EntityInputFormat(BaseInputFormat):
     name = 'entity'
 
     def _format_input(self, example: InputExample) -> str:
-        augmentations = [
-            ([(entity.type.natural,)], entity.start, entity.end)
-            for entity in example.entities
-        ]
+        augmentations = [([(entity.type.natural,)], entity.start, entity.end) for entity in example.entities]
 
         return augment_sentence(
             example.tokens, augmentations,
@@ -69,17 +65,14 @@ class EntityInputFormat(BaseInputFormat):
 
 
 @register_input_format
-class TriggerInputFormat(BaseInputFormat):
+class EntityBoundaryInputFormat(BaseInputFormat):
     """
-    This format uses the sentence with given triggers as input..
+    This format uses the sentence with given entity boundaries as input.
     """
-    name = 'trigger'
+    name = 'entity_boundary'
 
     def _format_input(self, example: InputExample) -> str:
-        augmentations = [
-            ([(entity.type.natural,)], entity.start, entity.end)
-            for entity in example.entities if is_trigger(entity)
-        ]
+        augmentations = [([], entity.start, entity.end) for entity in example.entities]
 
         return augment_sentence(
             example.tokens, augmentations,

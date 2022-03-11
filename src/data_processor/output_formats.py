@@ -10,7 +10,6 @@ import numpy as np
 
 from src.data_processor.input_example import InputExample, EntityType, RelationType
 from src.utils.tanl_utils import augment_sentence
-from src.utils.my_utils import is_trigger
 
 OUTPUT_FORMATS = {}
 
@@ -321,29 +320,14 @@ class EntityOutputFormat(BaseOutputFormat):
 
 
 @register_output_format
-class ArgumentOutputFormat(BaseOutputFormat):
+class EntityBoundaryOutputFormat(BaseOutputFormat):
     """
-    Output format with only arguments.
+    Output format with only entities.
     """
-    name = 'argument'
+    name = 'entity_boundary'
 
     def format_output(self, example: InputExample) -> str:
-        # organize relations by head entity
-        relations_by_entity = {entity: [] for entity in example.entities}
-        for relation in example.relations:
-            relations_by_entity[relation.head].append((relation.type, relation.tail))
-
-        augmentations = []
-        for entity in example.entities:
-            # Skip triggers when predicting arguments
-            if is_trigger(entity):
-                continue
-
-            tags = [(entity.type.natural,)]
-            for relation_type, tail in relations_by_entity[entity]:
-                tags.append((relation_type.natural, ' '.join(example.tokens[tail.start:tail.end])))
-
-            augmentations.append((tags, entity.start, entity.end))
+        augmentations = [([], entity.start, entity.end) for entity in example.entities]
 
         return augment_sentence(
             example.tokens, augmentations,

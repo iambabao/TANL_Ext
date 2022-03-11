@@ -4,7 +4,6 @@
 
 import os
 import logging
-import random
 from typing import Dict, Generator, Tuple, List
 from abc import ABC, abstractmethod
 import torch
@@ -16,19 +15,18 @@ from transformers import PreTrainedTokenizer, torch_distributed_zero_first, defa
 from src.data_processor.input_example import InputFeatures, InputExample
 from src.data_processor.input_formats import INPUT_FORMATS
 from src.data_processor.output_formats import OUTPUT_FORMATS
-from src.utils.arguments import DataTrainingArguments
 
 
 class BaseDataset(Dataset, ABC):
     """
     Base class for all datasets.
     """
-    name = None             # name of the dataset
-    data_name = None        # name of the directory, if different from the name of the dataset
-    task_descriptor = None  # string to prepend to every input sentence if multitask=True (default is self.name)
+    name = None  # name of the dataset
+    data_name = None  # name of the directory, if different from the name of the dataset
+    task_descriptor = None  # string to prepend to every input sentence if prefix=True (default is self.name)
 
     default_input_format = 'plain'
-    default_output_format = None
+    default_output_format = 'full'
     default_data_dir = 'data'
 
     input_sentences = None
@@ -39,53 +37,44 @@ class BaseDataset(Dataset, ABC):
             tokenizer: PreTrainedTokenizer,
             max_input_length: int,
             max_output_length: int,
-            overwrite_cache: bool = False,
             mode: str = 'train',
             local_rank: int = -1,
             train_subset: float = 1,  # a number < 1 is to use only a subset of training data (random)
-            seed: int = None,
-            shuffle: bool = True,
-            data_args: DataTrainingArguments = None,
-            is_eval: bool = False,
+            data_args = None,
     ):
-        if seed is not None:
-            # set random seed for repeatability
-            random.seed(seed)
-
         self.data_args = data_args
         self.tokenizer = tokenizer
+        self.prefix = data_args.prefix
 
         self.max_input_length = max_input_length
         self.max_output_length = max_output_length
 
-        self.input_format = INPUT_FORMATS[
-            data_args.input_format if data_args.input_format is not None else self.default_input_format
-        ]()
-        self.output_format = OUTPUT_FORMATS[
-            data_args.output_format if data_args.output_format is not None else self.default_output_format
-        ]()
+        self.input_format = INPUT_FORMATS[self.default_input_format]()
+        self.output_format = OUTPUT_FORMATS[self.default_output_format]()
 
         self.data_path = data_args.data_dir if data_args.data_dir is not None else self.default_data_dir
-
-        self.is_eval = is_eval
-        self.eval_nll = data_args.eval_nll
-
         cached_data_file = os.path.join(
             self.data_dir(),
-            f"cached_{self.name}_{mode}_{tokenizer.__class__.__name__}_{max_input_length}_{max_output_length}"
-            f"{'_multitask' if data_args.multitask else ''}.pth"
+            "cached_{}_{}_{}_{}_{}_{}.bin".format(
+                self.name,
+                mode,
+                list(filter(None, data_args.model_name_or_path.split("/"))).pop(),
+                max_input_length,
+                max_output_length,
+                "raw" if not data_args.prefix else "prefix",
+                "uncased" if data_args.do_lower_case else "cased",
+            ),
         )
 
         with torch_distributed_zero_first(local_rank):
             # make sure only the first process in distributed training processes the dataset,
             # and the others can use the cached version
 
-            if os.path.exists(cached_data_file) and not overwrite_cache:
+            if os.path.exists(cached_data_file) and not self.data_args.overwrite_cache:
                 self.load_cached_data(cached_data_file)
-
             else:
                 self.load_schema()   # here the dataset can load information such as entity/relation types
-                self.examples = self.load_data(mode=mode, seed=seed)
+                self.examples = self.load_data(mode=mode)
 
                 # assign examples to this dataset
                 for example in self.examples:
@@ -94,17 +83,14 @@ class BaseDataset(Dataset, ABC):
                 self.features = self.compute_features(
                     max_input_length=max_input_length,
                     max_output_length=max_output_length,
-                    multitask=data_args.multitask,
+                    prefix=data_args.prefix,
                 )
 
                 if local_rank in [-1, 0]:
                     # save data
                     self.save_data(cached_data_file)
 
-            # shuffle indices
             self.indices = list(range(len(self.examples)))
-            if seed is not None and shuffle:
-                random.shuffle(self.indices)
 
             # compute effective size of the dataset
             self.effective_size = round(train_subset * len(self.examples))
@@ -134,10 +120,7 @@ class BaseDataset(Dataset, ABC):
         self.examples, self.features = d['examples'], d['features']
 
     def save_data(self, cached_data_file: str):
-        torch.save({
-            'examples': self.examples,
-            'features': self.features,
-        }, cached_data_file)
+        torch.save({'examples': self.examples, 'features': self.features}, cached_data_file)
 
     def load_schema(self):
         """
@@ -146,13 +129,13 @@ class BaseDataset(Dataset, ABC):
         pass
 
     @abstractmethod
-    def load_data_single_split(self, split: str, seed: int = None) -> List[InputExample]:
+    def load_data_single_split(self, split: str) -> List[InputExample]:
         """
         Load data for a single split (train, dev, or test).
         """
         pass
 
-    def load_data(self, mode: str, seed: int = None) -> List[InputExample]:
+    def load_data(self, mode: str) -> List[InputExample]:
         """
         Load all data, where 'mode' is a list of comma-separated splits to use.
         """
@@ -165,7 +148,7 @@ class BaseDataset(Dataset, ABC):
             splits = mode
 
         for split in splits:
-            examples += self.load_data_single_split(split, seed=seed)
+            examples += self.load_data_single_split(split)
 
         return examples
 
@@ -177,8 +160,8 @@ class BaseDataset(Dataset, ABC):
                 f'{max_length_needed} long'
             )
 
-    def compute_features(self, max_input_length: int, max_output_length: int, multitask: bool = False):
-        input_sentences = [self.input_format.format_input(example, multitask=multitask) for example in self.examples]
+    def compute_features(self, max_input_length: int, max_output_length: int, prefix: bool = False):
+        input_sentences = [self.input_format.format_input(example, prefix=prefix) for example in self.examples]
         output_sentences = [self.output_format.format_output(example) for example in self.examples]
         self.input_sentences = input_sentences
         self.output_sentences = output_sentences
@@ -204,8 +187,9 @@ class BaseDataset(Dataset, ABC):
         assert input_tok.input_ids.size(0) == output_tok.input_ids.size(0)
     
         features = []
-        for sentence_input_ids, att_mask, label_input_ids in zip(input_tok.input_ids, input_tok.attention_mask,
-                                                                 output_tok.input_ids):
+        for sentence_input_ids, att_mask, label_input_ids in zip(
+                input_tok.input_ids, input_tok.attention_mask, output_tok.input_ids
+        ):
             features.append(InputFeatures(
                 input_ids=sentence_input_ids.tolist(),
                 attention_mask=att_mask.tolist(),
@@ -214,8 +198,13 @@ class BaseDataset(Dataset, ABC):
     
         return features
 
-    def generate_output_sentences(self, data_args: DataTrainingArguments, model, device, batch_size: int) \
-            -> Generator[Tuple[InputExample, str], None, None]:
+    def generate_output_sentences(
+            self,
+            data_args,
+            model,
+            device,
+            batch_size: int
+    ) -> Generator[Tuple[InputExample, str], None, None]:
         """
         Generate pairs (example, output_sentence) for evaluation.
         """
@@ -234,17 +223,17 @@ class BaseDataset(Dataset, ABC):
             )
 
             for j, (input_ids, label_ids, prediction) in enumerate(
-                    zip(inputs['input_ids'], inputs['labels'], predictions)):
+                    zip(inputs['input_ids'], inputs['labels'], predictions)
+            ):
                 current_id = i * batch_size + j
                 example = self.get_example(current_id)
-                output_sentence = self.tokenizer.decode(prediction, skip_special_tokens=True,
-                                                        clean_up_tokenization_spaces=False)
-
+                output_sentence = self.tokenizer.decode(
+                    prediction, skip_special_tokens=True, clean_up_tokenization_spaces=False
+                )
                 yield example, output_sentence
 
     @abstractmethod
-    def evaluate_dataset(self, data_args: DataTrainingArguments, model, device, batch_size: int, macro: bool = False) \
-            -> Dict[str, float]:
+    def evaluate_dataset(self, data_args, model, device, batch_size: int, macro: bool = False) -> Dict[str, float]:
         """
         Evaluate model on this dataset, returning the task-relevant metrics.
         """

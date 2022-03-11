@@ -8,7 +8,6 @@ from collections import Counter
 from src.data_processor.base_dataset import BaseDataset
 from src.data_processor.input_example import EntityType, RelationType, Entity, Relation, InputExample
 from src.utils.tanl_utils import get_precision_recall_f1
-from src.utils.my_utils import to_natural, is_trigger
 
 logger = logging.getLogger(__name__)
 DATASETS = {}
@@ -21,20 +20,15 @@ def register_dataset(dataset_class):
 
 def load_dataset(
         dataset_name, data_args, tokenizer, split,
-        max_input_length, max_output_length,
-        train_subset=1.0, seed=None, shuffle=True, is_eval=False,
+        max_input_length, max_output_length, train_subset=1.0,
 ):
     return DATASETS[dataset_name](
         tokenizer=tokenizer,
         max_input_length=max_input_length,
         max_output_length=max_output_length,
         mode=split,
-        overwrite_cache=data_args.overwrite_cache,
         train_subset=train_subset,
-        seed=seed,
-        shuffle=shuffle,
         data_args=data_args,
-        is_eval=is_eval,
     )
 
 
@@ -75,7 +69,7 @@ class BasicBaseDataset(BaseDataset):
                 for short, natural in self.natural_relation_types.items()
             }
 
-    def load_data_single_split(self, split, seed=None):
+    def load_data_single_split(self, split):
         examples = []
         filename = os.path.join(self.data_dir(), 'data_{}.json'.format(split))
 
@@ -87,17 +81,13 @@ class BasicBaseDataset(BaseDataset):
                 tokens = entry['tokens']
 
                 entities = [
-                    Entity(
-                        id=j, type=self.entity_types[ent['type']], start=ent['start'], end=ent['end']
-                    )
-                    for j, ent in enumerate(entry['entities'])
+                    Entity(id=j, type=self.entity_types[e['type']], start=e['start'], end=e['end'])
+                    for j, e in enumerate(entry['entities'])
                 ]
 
                 relations = [
-                    Relation(
-                        type=self.relation_types[rel['type']], head=entities[rel['head']], tail=entities[rel['tail']]
-                    )
-                    for rel in entry['relations']
+                    Relation(type=self.relation_types[r['type']], head=entities[r['head']], tail=entities[r['tail']])
+                    for r in entry['relations']
                 ]
 
                 examples.append(InputExample(
@@ -128,10 +118,7 @@ class BasicBaseDataset(BaseDataset):
         predicted_entities_no_type = set([entity[1:] for entity in predicted_entities])
 
         # load ground truth entities
-        if self.default_output_format in ['argument']:
-            gt_entities = set(entity.to_tuple() for entity in example.entities if not is_trigger(entity))
-        else:
-            gt_entities = set(entity.to_tuple() for entity in example.entities)
+        gt_entities = set(entity.to_tuple() for entity in example.entities)
         gt_entities_no_type = set([entity[1:] for entity in gt_entities])
 
         # compute correct entities
@@ -234,10 +221,7 @@ class BasicBaseDataset(BaseDataset):
         results = Counter()
 
         for example, output_sentence in self.generate_output_sentences(data_args, model, device, batch_size):
-            new_result = self.evaluate_example(
-                    example=example,
-                    output_sentence=output_sentence,
-                )
+            new_result = self.evaluate_example(example=example, output_sentence=output_sentence)
             results += new_result
 
         entity_precision, entity_recall, entity_f1 = get_precision_recall_f1(
@@ -299,10 +283,14 @@ class BasicBaseDataset(BaseDataset):
         return metrics
 
 
-# NER
 @register_dataset
-class CoNLL03NERDataset(BasicBaseDataset):
+class CoNLL03NER(BasicBaseDataset):
     name = 'conll03_ner'
+    data_name = 'conll03_ner'
+    task_descriptor = 'Find entities from conll03'
+
+    default_input_format = 'plain'
+    default_output_format = 'full'
 
     natural_entity_types = {
         'LOC': 'location',
@@ -312,10 +300,34 @@ class CoNLL03NERDataset(BasicBaseDataset):
     }
 
 
-# NER
 @register_dataset
-class OntoNotesNERDataset(BasicBaseDataset):
+class CoNLL03NERS1(CoNLL03NER):
+    name = 'conll03_ner_s1'
+    data_name = 'conll03_ner'
+    task_descriptor = 'Find entity boundaries from conll03'
+
+    default_input_format = 'plain'
+    default_output_format = 'entity_boundary'
+
+
+@register_dataset
+class CoNLL03NERS2(CoNLL03NER):
+    name = 'conll03_ner_s2'
+    data_name = 'conll03_ner'
+    task_descriptor = 'Find entity types from conll03'
+
+    default_input_format = 'entity_boundary'
+    default_output_format = 'full'
+
+
+@register_dataset
+class OntoNotesNER(BasicBaseDataset):
     name = 'ontonotes_ner'
+    data_name = 'ontonotes_ner'
+    task_descriptor = 'Find entities from ontonotes'
+
+    default_input_format = 'plain'
+    default_output_format = 'full'
 
     natural_entity_types = {
         'CARDINAL': 'cardinal',
@@ -339,10 +351,35 @@ class OntoNotesNERDataset(BasicBaseDataset):
     }
 
 
-# NER
 @register_dataset
-class GENIANERDataset(BasicBaseDataset):
+class OntoNotesNERS1(OntoNotesNER):
+    name = 'ontonotes_ner_s1'
+    data_name = 'ontonotes_ner'
+    task_descriptor = 'Find entity boundaries from ontonotes'
+
+    default_input_format = 'plain'
+    default_output_format = 'entity_boundary'
+
+
+@register_dataset
+class OntoNotesNERS2(OntoNotesNER):
+    name = 'ontonotes_ner_s2'
+    data_name = 'ontonotes_ner'
+    task_descriptor = 'Find entity types from ontonotes'
+
+    default_input_format = 'entity_boundary'
+    default_output_format = 'full'
+
+
+
+@register_dataset
+class GeniaNER(BasicBaseDataset):
     name = 'genia_ner'
+    data_name = 'genia_ner'
+    task_descriptor = 'Find entities from genia'
+
+    default_input_format = 'plain'
+    default_output_format = 'full'
 
     natural_entity_types = {
         'G#DNA': 'DNA',
@@ -353,26 +390,34 @@ class GENIANERDataset(BasicBaseDataset):
     }
 
 
-# NER
 @register_dataset
-class ACE2005NERDataset(BasicBaseDataset):
-    name = 'ace2005_ner'
+class GeniaNERS1(GeniaNER):
+    name = 'genia_ner_s1'
+    data_name = 'genia_ner'
+    task_descriptor = 'Find entity boundaries from genia'
 
-    natural_entity_types = {
-        'PER': 'person',
-        'LOC': 'location',
-        'ORG': 'organization',
-        'VEH': 'vehicle',
-        'GPE': 'geographical entity',
-        'WEA': 'weapon',
-        'FAC': 'facility',
-    }
+    default_input_format = 'plain'
+    default_output_format = 'entity_boundary'
 
 
-# Joint entity relation extraction
 @register_dataset
-class CoNLL04REDataset(BasicBaseDataset):
+class GeniaNERS2(GeniaNER):
+    name = 'genia_ner_s2'
+    data_name = 'genia_ner'
+    task_descriptor = 'Find entity types from genia'
+
+    default_input_format = 'entity_boundary'
+    default_output_format = 'full'
+
+
+@register_dataset
+class CoNLL04RE(BasicBaseDataset):
     name = 'conll04_re'
+    data_name = 'conll04_re'
+    task_descriptor = 'Find both entities and relations from conll04'
+
+    default_input_format = 'plain'
+    default_output_format = 'full'
 
     natural_entity_types = {
         'Loc': 'location',
@@ -390,10 +435,34 @@ class CoNLL04REDataset(BasicBaseDataset):
     }
 
 
-# Joint entity relation extraction
 @register_dataset
-class NYTREDataset(BasicBaseDataset):
+class CoNLL04RES1(CoNLL04RE):
+    name = 'conll04_re_s1'
+    data_name = 'conll04_re'
+    task_descriptor = 'Find entity boundaries from conll04'
+
+    default_input_format = 'plain'
+    default_output_format = 'entity_boundary'
+
+
+@register_dataset
+class CoNLL04RES2(CoNLL04RE):
+    name = 'conll04_re_s2'
+    data_name = 'conll04_re'
+    task_descriptor = 'Find entity types and relations from conll04'
+
+    default_input_format = 'entity_boundary'
+    default_output_format = 'full'
+
+
+@register_dataset
+class NYTRE(BasicBaseDataset):
     name = 'nyt_re'
+    data_name = 'nyt_re'
+    task_descriptor = 'Find both entities and relations from nyt'
+
+    default_input_format = 'plain'
+    default_output_format = 'full'
 
     natural_entity_types = {
         'PERSON': 'person',
@@ -429,10 +498,34 @@ class NYTREDataset(BasicBaseDataset):
     }
 
 
-# Joint entity relation extraction
 @register_dataset
-class ADEREDataset(BasicBaseDataset):
+class NYTRES1(NYTRE):
+    name = 'nyt_re_s1'
+    data_name = 'nyt_re'
+    task_descriptor = 'Find entity boundaries from nyt'
+
+    default_input_format = 'plain'
+    default_output_format = 'entity_boundary'
+
+
+@register_dataset
+class NYTRES2(NYTRE):
+    name = 'nyt_re_s2'
+    data_name = 'nyt_re'
+    task_descriptor = 'Find entity types and relations from nyt'
+
+    default_input_format = 'entity_boundary'
+    default_output_format = 'full'
+
+
+@register_dataset
+class ADERE(BasicBaseDataset):
     name = 'ade_re'
+    data_name = 'ade_re'
+    task_descriptor = 'Find both entities and relations from ade'
+
+    default_input_format = 'plain'
+    default_output_format = 'full'
 
     natural_entity_types = {
         'Adverse-Effect': 'disease',
@@ -444,10 +537,34 @@ class ADEREDataset(BasicBaseDataset):
     }
 
 
-# Joint entity relation extraction
 @register_dataset
-class ACE2005REDataset(BasicBaseDataset):
+class ADERES1(ADERE):
+    name = 'ade_re_s1'
+    data_name = 'ade_re'
+    task_descriptor = 'Find entity boundaries from ade'
+
+    default_input_format = 'plain'
+    default_output_format = 'entity_boundary'
+
+
+@register_dataset
+class ADERES2(ADERE):
+    name = 'ade_re_s2'
+    data_name = 'ade_re'
+    task_descriptor = 'Find entity types and relations from ade'
+
+    default_input_format = 'entity_boundary'
+    default_output_format = 'full'
+
+
+@register_dataset
+class ACE2005RE(BasicBaseDataset):
     name = 'ace2005_re'
+    data_name = 'ace2005_re'
+    task_descriptor = 'Find both entities and relations from ace05'
+
+    default_input_format = 'plain'
+    default_output_format = 'full'
 
     natural_entity_types = {
         'PER': 'person',
@@ -469,133 +586,21 @@ class ACE2005REDataset(BasicBaseDataset):
     }
 
 
-# Relation classification
 @register_dataset
-class TacRedRCDataset(BasicBaseDataset):
-    name = 'tacred_rc'
+class ACE2005RES1(ACE2005RE):
+    name = 'ace2005_re_s1'
+    data_name = 'ace2005_re'
+    task_descriptor = 'Find entity boundaries from ace05'
 
-    entity_types = {}
-    relation_types = {}
-
-    default_input_format = 'entity'
-
-    def load_schema(self):
-        filename = os.path.join(self.data_dir(), 'schema_entity.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for line in fp:
-                short = line.strip()
-                natural = to_natural(short)
-                self.entity_types[short] = EntityType(short=short, natural=natural)
-
-        filename = os.path.join(self.data_dir(), 'schema_relation.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for line in fp:
-                short = line.strip()
-                natural = to_natural(short)
-                natural = natural.replace('stateorprovince', 'state or province')
-                self.relation_types[short] = RelationType(short=short, natural=natural)
+    default_input_format = 'plain'
+    default_output_format = 'entity_boundary'
 
 
-# Event trigger
 @register_dataset
-class ACE2005EventTriggerDataset(BasicBaseDataset):
-    name = 'ace2005_trigger'
+class ACE2005RES2(ACE2005RE):
+    name = 'ace2005_re_s2'
+    data_name = 'ace2005_re'
+    task_descriptor = 'Find entity types and relations from ace05'
 
-    entity_types = {}
-    relation_types = {}
-
-    def load_schema(self):
-        filename = os.path.join(self.data_dir(), 'schema_entity.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for line in fp:
-                short = line.strip()
-                natural = to_natural(short)
-                self.entity_types[short] = EntityType(short=short, natural=natural)
-
-        filename = os.path.join(self.data_dir(), 'schema_relation.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for line in fp:
-                short = line.strip()
-                natural = to_natural(short)
-                self.relation_types[short] = RelationType(short=short, natural=natural)
-
-
-# Event argument
-@register_dataset
-class ACE2005EventArgumentDataset(BasicBaseDataset):
-    name = 'ace2005_argument'
-
-    entity_types = {}
-    relation_types = {}
-
-    default_input_format = 'trigger'
-    default_output_format = 'argument'
-
-    def load_schema(self):
-        filename = os.path.join(self.data_dir(), 'schema_entity.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for line in fp:
-                short = line.strip()
-                natural = to_natural(short)
-                self.entity_types[short] = EntityType(short=short, natural=natural)
-
-        filename = os.path.join(self.data_dir(), 'schema_relation.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for line in fp:
-                short = line.strip()
-                natural = to_natural(short)
-                self.relation_types[short] = RelationType(short=short, natural=natural)
-
-
-# SRL
-@register_dataset
-class CoNLL05SRLDataset(BasicBaseDataset):
-    name = 'conll05_srl'
-
-    entity_types = {}
-    relation_types = {}
-
-    default_input_format = 'trigger'
-    default_output_format = 'argument'
-
-    def load_schema(self):
-        filename = os.path.join(self.data_dir(), 'schema_entity.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for line in fp:
-                short = line.strip()
-                natural = to_natural(short)
-                self.entity_types[short] = EntityType(short=short, natural=natural)
-
-        filename = os.path.join(self.data_dir(), 'schema_relation.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for line in fp:
-                short = line.strip()
-                natural = to_natural(short)
-                self.relation_types[short] = RelationType(short=short, natural=natural)
-
-
-# SRL
-@register_dataset
-class CoNLL12SRLDataset(BasicBaseDataset):
-    name = 'conll12_srl'
-
-    entity_types = {}
-    relation_types = {}
-
-    default_input_format = 'trigger'
-    default_output_format = 'argument'
-
-    def load_schema(self):
-        filename = os.path.join(self.data_dir(), 'schema_entity.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for line in fp:
-                short = line.strip()
-                natural = to_natural(short)
-                self.entity_types[short] = EntityType(short=short, natural=natural)
-
-        filename = os.path.join(self.data_dir(), 'schema_relation.txt')
-        with open(filename, 'r', encoding='utf-8') as fp:
-            for line in fp:
-                short = line.strip()
-                natural = to_natural(short)
-                self.relation_types[short] = RelationType(short=short, natural=natural)
+    default_input_format = 'entity_boundary'
+    default_output_format = 'full'

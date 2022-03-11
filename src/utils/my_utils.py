@@ -11,6 +11,7 @@
 import json
 import random
 import logging
+from argparse import Namespace
 from nltk.translate.bleu_score import corpus_bleu
 
 logger = logging.getLogger(__name__)
@@ -153,20 +154,20 @@ def make_batch_iter(data, batch_size, shuffle):
 
 
 # ====================
-def to_natural(short):
-    natural = short.lower()
-    natural = natural.split(':')[-1]
-    natural = natural.replace('_', ' ')
-    natural = natural.replace('/', ' ')
-    return natural
-
-
-def is_trigger(entity):
-    if entity.type.short.lower() in ['v', 'verb', 'trigger']:
-        return True
-    if entity.type.short.lower().startswith('trigger:'):
-        return True
-    return False
+def parse_data_args(args, dataset_name, dataset_split):
+    data_args = Namespace()
+    data_args.model_name_or_path = args.model_name_or_path
+    data_args.data_dir = args.data_dir
+    data_args.dataset_name = dataset_name
+    data_args.dataset_split = dataset_split
+    data_args.max_seq_length = args.max_src_length
+    data_args.max_output_seq_length = args.max_tgt_length
+    data_args.max_seq_length_eval = args.max_src_length
+    data_args.max_output_seq_length_eval = args.max_tgt_length
+    data_args.prefix = args.prefix
+    data_args.do_lower_case = args.do_lower_case
+    data_args.overwrite_cache = args.overwrite_cache
+    return data_args
 
 
 def format_data(tokens, entities, relations):
@@ -189,6 +190,57 @@ def format_data(tokens, entities, relations):
     relations = sorted(relations, key=lambda x: (x['h_start'], x['h_end'], x['t_start'], x['t_end']))
 
     return entities, relations
+
+
+# def refine_outputs(args, outputs, data_processor):
+#     shift = 0
+#     refined_outputs = defaultdict(list)
+#     for task in args.task_list:
+#         dataset = data_processor.datasets[task]
+#         for example, generated_ids in zip(dataset.examples, outputs[shift:]):
+#             generated_sentence = data_processor.tokenizer.decode(
+#                 generated_ids,
+#                 skip_special_tokens=True,
+#                 clean_up_tokenization_spaces=False,
+#             )
+#             generated_output = dataset.output_format.run_inference(
+#                 example,
+#                 generated_sentence,
+#                 entity_types=dataset.entity_types,
+#                 relation_types=dataset.relation_types,
+#             )
+#             generated_entities, generated_relations = generated_output[:2]
+#             generated_entities, generated_relations = format_data(
+#                 tokens=example.tokens,
+#                 entities=generated_entities,
+#                 relations=generated_relations,
+#             )
+#             refined_outputs[task].append({
+#                 'content': ' '.join(example.tokens),
+#                 'output': generated_output,
+#                 'entities': generated_entities,
+#                 'relations': generated_relations,
+#             })
+#         shift += len(dataset.examples)
+#     return refined_outputs
+#
+#
+# def compute_metrics(args, outputs, data_processor):
+#     results = {}
+#     entity_f1 = []
+#     relation_f1 = []
+#     entity_f1_no_type = []
+#     for task in args.task_list:
+#         dataset = data_processor.datasets[task]
+#         results[task] = dataset.evaluate_generated_outputs(outputs[task])
+#         entity_f1.append(results[task]["entity_f1"])
+#         relation_f1.append(results[task]["relation_f1"])
+#         entity_f1_no_type.append(results[task]["entity_f1_no_type"])
+#     results["entity_f1"] = sum(entity_f1) / len(entity_f1)
+#     results["relation_f1"] = sum(relation_f1) / len(relation_f1)
+#     results["entity_f1_no_type"] = sum(entity_f1_no_type) / len(entity_f1_no_type)
+#     results["score"] = (results["entity_f1"] + results["relation_f1"]) / 2
+#     return results
 
 
 def generate_outputs(outputs, tokenizer):
