@@ -12,7 +12,7 @@ import json
 import random
 import logging
 from argparse import Namespace
-from nltk.translate.bleu_score import corpus_bleu
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,6 @@ def make_batch_iter(data, batch_size, shuffle):
 # ====================
 def parse_data_args(args, dataset_name, dataset_split):
     data_args = Namespace()
-    data_args.model_name_or_path = args.model_name_or_path
     data_args.data_dir = args.data_dir
     data_args.dataset_name = dataset_name
     data_args.dataset_split = dataset_split
@@ -192,87 +191,52 @@ def format_data(tokens, entities, relations):
     return entities, relations
 
 
-# def refine_outputs(args, outputs, data_processor):
-#     shift = 0
-#     refined_outputs = defaultdict(list)
-#     for task in args.task_list:
-#         dataset = data_processor.datasets[task]
-#         for example, generated_ids in zip(dataset.examples, outputs[shift:]):
-#             generated_sentence = data_processor.tokenizer.decode(
-#                 generated_ids,
-#                 skip_special_tokens=True,
-#                 clean_up_tokenization_spaces=False,
-#             )
-#             generated_output = dataset.output_format.run_inference(
-#                 example,
-#                 generated_sentence,
-#                 entity_types=dataset.entity_types,
-#                 relation_types=dataset.relation_types,
-#             )
-#             generated_entities, generated_relations = generated_output[:2]
-#             generated_entities, generated_relations = format_data(
-#                 tokens=example.tokens,
-#                 entities=generated_entities,
-#                 relations=generated_relations,
-#             )
-#             refined_outputs[task].append({
-#                 'content': ' '.join(example.tokens),
-#                 'output': generated_output,
-#                 'entities': generated_entities,
-#                 'relations': generated_relations,
-#             })
-#         shift += len(dataset.examples)
-#     return refined_outputs
-#
-#
-# def compute_metrics(args, outputs, data_processor):
-#     results = {}
-#     entity_f1 = []
-#     relation_f1 = []
-#     entity_f1_no_type = []
-#     for task in args.task_list:
-#         dataset = data_processor.datasets[task]
-#         results[task] = dataset.evaluate_generated_outputs(outputs[task])
-#         entity_f1.append(results[task]["entity_f1"])
-#         relation_f1.append(results[task]["relation_f1"])
-#         entity_f1_no_type.append(results[task]["entity_f1_no_type"])
-#     results["entity_f1"] = sum(entity_f1) / len(entity_f1)
-#     results["relation_f1"] = sum(relation_f1) / len(relation_f1)
-#     results["entity_f1_no_type"] = sum(entity_f1_no_type) / len(entity_f1_no_type)
-#     results["score"] = (results["entity_f1"] + results["relation_f1"]) / 2
-#     return results
-
-
-def generate_outputs(outputs, tokenizer):
-    generated = []
-    for line in outputs:
-        generated.append(tokenizer.decode(line, skip_special_tokens=True, clean_up_tokenization_spaces=False))
-    return generated
-
-
-def refine_outputs(examples, outputs):
-    refined_outputs = []
-    for example, generated in zip(examples, outputs):
-        refined_outputs.append({
-            'source': example.source,
-            'target': example.target,
-            'generated': generated,
-            'task_name': example.task_name,
-        })
+def refine_outputs(args, outputs, data_processor, split):
+    shift = 0
+    refined_outputs = defaultdict(list)
+    for task in args.task_list:
+        dataset = data_processor.datasets[task][split]
+        for example, generated_ids in zip(dataset.examples, outputs[shift:]):
+            generated_sentence = data_processor.tokenizer.decode(
+                generated_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
+            generated_output = dataset.output_format.run_inference(
+                example,
+                generated_sentence,
+                entity_types=dataset.entity_types,
+                relation_types=dataset.relation_types,
+            )
+            generated_entities, generated_relations = generated_output[:2]
+            generated_entities, generated_relations = format_data(
+                tokens=example.tokens,
+                entities=generated_entities,
+                relations=generated_relations,
+            )
+            refined_outputs[task].append({
+                'context': ' '.join(example.tokens),
+                'output': generated_sentence,
+                'entities': generated_entities,
+                'relations': generated_relations,
+            })
+        shift += len(dataset.examples)
     return refined_outputs
 
 
-def compute_metrics(outputs):
-    references = []
-    hypotheses = []
-    for entry in outputs:
-        references.append([entry['target'].strip().split()])  # ref is a list of words
-        hypotheses.append(entry['generated'].strip().split())  # hyp is a list of words
-
-    bleu1 = corpus_bleu(references, hypotheses, (1., 0., 0., 0.))
-    bleu2 = corpus_bleu(references, hypotheses, (0.5, 0.5, 0., 0.))
-    bleu3 = corpus_bleu(references, hypotheses, (0.33, 0.33, 0.33, 0.))
-    bleu4 = corpus_bleu(references, hypotheses, (0.25, 0.25, 0.25, 0.25))
-    result = {'Bleu_1': bleu1, 'Bleu_2': bleu2, 'Bleu_3': bleu3, 'Bleu_4': bleu4, }
-
-    return result
+def compute_metrics(args, outputs, data_processor, split):
+    results = {}
+    entity_f1 = []
+    relation_f1 = []
+    entity_f1_no_type = []
+    for task in args.task_list:
+        dataset = data_processor.datasets[task][split]
+        results[task] = dataset.evaluate_generated_outputs([_["output"] for _ in outputs[task]])
+        entity_f1.append(results[task]["entity_f1"])
+        relation_f1.append(results[task]["relation_f1"])
+        entity_f1_no_type.append(results[task]["entity_f1_no_type"])
+    results["entity_f1"] = sum(entity_f1) / len(entity_f1)
+    results["relation_f1"] = sum(relation_f1) / len(relation_f1)
+    results["entity_f1_no_type"] = sum(entity_f1_no_type) / len(entity_f1_no_type)
+    results["score"] = (results["entity_f1"] + results["relation_f1"]) / 2
+    return results

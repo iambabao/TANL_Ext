@@ -17,6 +17,7 @@ import json
 import torch
 import torch.distributed as dist
 from tqdm import tqdm
+from collections import defaultdict
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from transformers import (
@@ -29,12 +30,12 @@ AdamW,
 get_linear_schedule_with_warmup,
 )
 
-from src.data_processor import DataProcessor
+from src.data_processor import DataProcessor, load_my_dataset as load_dataset
 from src.utils.my_utils import (
 init_logger,
 save_json,
 save_json_lines,
-generate_outputs,
+parse_data_args,
 refine_outputs,
 compute_metrics,
 )
@@ -51,13 +52,9 @@ def save_checkpoint(output_dir, model, tokenizer, args):
     torch.save(args, os.path.join(output_dir, "training_args.bin"))
 
 
-def train(args, data_processor, model, tokenizer, role):
+def train(args, data_processor, model, split):
     args.train_batch_size = args.per_device_train_batch_size * max(1, args.n_gpu)
-    if args.local_rank not in [-1, 0]:
-        torch.distributed.barrier()
-    _, train_dataset = data_processor.load_and_cache_data(tokenizer, role, args.suffix)
-    if args.local_rank == 0:
-        torch.distributed.barrier()
+    train_dataset = data_processor.create_tensor_dataset(args.task_list, split=split)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
 
@@ -135,7 +132,7 @@ def train(args, data_processor, model, tokenizer, role):
 
             global_step += 1
             training_loss += loss.item()
-            description = "Global step: {:>6d}, Loss: {:>.4f}".format(global_step, loss.item())
+            description = "Global step: {:>6d}, Loss: {:.4f}".format(global_step, loss.item())
             epoch_iterator.set_description(description)
 
             if args.local_rank in [-1, 0]:
@@ -146,25 +143,24 @@ def train(args, data_processor, model, tokenizer, role):
                             args,
                             data_processor,
                             model.module if hasattr(model, "module") else model,
-                            tokenizer,
-                            role="valid",
+                            split="valid",
                             prefix=str(global_step)
                         )
-                        current_score, best_score = results["Bleu_4"], max(best_score, results["Bleu_4"])
+                        current_score, best_score = results["score"], max(best_score, results["score"])
                         if current_score >= best_score:
                             early_stop_flag = 0
                             output_dir = os.path.join(args.output_dir, "checkpoint-best")
-                            save_checkpoint(output_dir, model, tokenizer, args)
+                            save_checkpoint(output_dir, model, data_processor.tokenizer, args)
                         else:
                             early_stop_flag += 1
-                            save_checkpoint(args.output_dir, model, tokenizer, args)
+                            save_checkpoint(args.output_dir, model, data_processor.tokenizer, args)
                         if 0 < args.early_stop < early_stop_flag:
                             break
                     elif args.save_all_checkpoints:
                         output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(global_step))
-                        save_checkpoint(output_dir, model, tokenizer, args)
+                        save_checkpoint(output_dir, model, data_processor.tokenizer, args)
                     else:
-                        save_checkpoint(args.output_dir, model, tokenizer, args)
+                        save_checkpoint(args.output_dir, model, data_processor.tokenizer, args)
 
             if args.local_rank != -1:
                 torch.distributed.barrier()  # wait for evaluation if needed
@@ -176,12 +172,12 @@ def train(args, data_processor, model, tokenizer, role):
             break
 
     if args.local_rank in [-1, 0]:
-        save_checkpoint(args.output_dir, model, tokenizer, args)
+        save_checkpoint(args.output_dir, model, data_processor.tokenizer, args)
 
     return global_step, training_loss / global_step
 
 
-def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
+def evaluate(args, data_processor, model, split, prefix=""):
     if prefix == "":
         output_dir = args.output_dir
     else:
@@ -189,13 +185,13 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
     os.makedirs(output_dir, exist_ok=True)
 
     args.eval_batch_size = args.per_device_eval_batch_size * max(1, args.n_gpu)
-    examples, dataset = data_processor.load_and_cache_data(tokenizer, role, args.suffix)
-    eval_sampler = SequentialSampler(dataset)
-    eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
+    eval_dataset = data_processor.create_tensor_dataset(args.task_list, split)
+    eval_sampler = SequentialSampler(eval_dataset)
+    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
     # Eval!
     logger.info("***** Running evaluation {} *****".format(prefix))
-    logger.info("Num examples = %d", len(dataset))
+    logger.info("Num examples = %d", len(eval_dataset))
     logger.info("Batch size = %d", args.eval_batch_size)
 
     eval_outputs = []
@@ -209,14 +205,15 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
 
             outputs = model.generate(**inputs, max_length=args.max_tgt_length)
 
-            eval_outputs.extend(generate_outputs(outputs.detach().cpu().tolist(), tokenizer))
+            eval_outputs.extend(outputs.detach().cpu().tolist())
 
-    eval_outputs = refine_outputs(examples, eval_outputs)
-    eval_outputs_file = os.path.join(output_dir, "{}_outputs.json".format(role))
-    save_json_lines(eval_outputs, eval_outputs_file)
+    eval_outputs = refine_outputs(args, eval_outputs, data_processor, split)
+    for task, outputs in eval_outputs.items():
+        eval_outputs_file = os.path.join(output_dir, "{}_{}_outputs.json".format(split, task))
+        save_json(outputs, eval_outputs_file)
 
-    eval_results = compute_metrics(eval_outputs)
-    eval_results_file = os.path.join(output_dir, "{}_results.txt".format(role))
+    eval_results = compute_metrics(args, eval_outputs, data_processor, split)
+    eval_results_file = os.path.join(output_dir, "{}_results.txt".format(split))
     save_json(eval_results, eval_results_file)
     logger.info("***** Eval results {} *****".format(prefix))
     logger.info(json.dumps(eval_results, ensure_ascii=False, indent=4))
@@ -228,9 +225,8 @@ def main():
     parser = argparse.ArgumentParser()
 
     # Datasets parameters
-    parser.add_argument("--tasks", required=True, type=str, help="")
-    parser.add_argument("--suffix", default=None, type=str, help="")
-    parser.add_argument("--with_prefix", action="store_true", help="")
+    parser.add_argument("--task", required=True, type=str, help="")
+    parser.add_argument("--prefix", action="store_true", help="")
 
     # Model hyper parameters
     parser.add_argument(
@@ -357,9 +353,14 @@ def main():
 
     training_config = configparser.ConfigParser(allow_no_value=False)
     training_config.read("config.temp.ini")
-    if args.tasks in training_config:
-        if "num_train_epochs" in training_config[args.tasks]:
-            args.num_train_epochs = int(training_config[args.tasks]["num_train_epochs"])
+    assert args.task in training_config
+    if args.task in training_config:
+        if "task_list" in training_config[args.task]:
+            args.task_list = sorted(eval(training_config[args.task]["task_list"]))
+        else:
+            args.task_list = sorted(args.task.split(","))
+        if "num_train_epochs" in training_config[args.task]:
+            args.num_train_epochs = int(training_config[args.task]["num_train_epochs"])
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
@@ -381,7 +382,7 @@ def main():
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
-                "raw" if not args.with_prefix else "prefix",
+                "raw" if not args.prefix else "prefix",
                 "uncased" if args.do_lower_case else "cased",
                 args.learning_rate,
             ),
@@ -400,20 +401,7 @@ def main():
     # Set seed
     set_seed(args.seed)
 
-    # Parse tasks
-    args.tasks = sorted(args.tasks.split(","))
-
     # Load config, tokenizer and pretrained model
-    data_processor = DataProcessor(
-        args.tasks,
-        args.model_name_or_path,
-        args.max_src_length,
-        args.max_tgt_length,
-        data_dir=args.data_dir,
-        with_prefix=args.with_prefix,
-        do_lower_case=args.do_lower_case,
-        overwrite_cache=args.overwrite_cache,
-    )
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
     config = AutoConfig.from_pretrained(
@@ -431,6 +419,22 @@ def main():
     logger.info("Training/evaluation parameters %s", args)
     logger.info("Training/evaluation config %s", config)
 
+    # Load datasets
+    datasets = defaultdict(dict)
+    for task in args.task_list:
+        for split in ["train", "valid", "test"]:
+            data_args = parse_data_args(args, task, split)
+            datasets[task][split] = load_dataset(
+                dataset_name=data_args.dataset_name,
+                data_args=data_args,
+                tokenizer=tokenizer,
+                max_input_length=data_args.max_seq_length_eval,
+                max_output_length=data_args.max_output_seq_length_eval,
+                split=data_args.dataset_split,
+            )
+            logger.info("{}-{}: {}".format(task, split, len(datasets[task][split].examples)))
+    data_processor = DataProcessor(datasets, tokenizer)
+
     # Training
     if args.do_train:
         args.output_dir = os.path.join(
@@ -439,7 +443,7 @@ def main():
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
-                "raw" if not args.with_prefix else "prefix",
+                "raw" if not args.prefix else "prefix",
                 "uncased" if args.do_lower_case else "cased",
                 args.learning_rate,
             ),
@@ -464,7 +468,7 @@ def main():
         for n, p in model.named_parameters():
             logger.info("{} (size: {} requires_grad: {})".format(n, p.size(), p.requires_grad))
 
-        global_step, training_loss = train(args, data_processor, model, tokenizer, role="train")
+        global_step, training_loss = train(args, data_processor, model, split="train")
         logger.info("global_step = %s, average loss = %s", global_step, training_loss)
 
     # Evaluation - we can ask to evaluate all the checkpoints (sub-directories) in a directory
@@ -497,8 +501,7 @@ def main():
                 continue
 
             # Evaluate
-            # Report the final results on test set
-            result = evaluate(args, data_processor, model, tokenizer, role="test", prefix=global_step)
+            result = evaluate(args, data_processor, model, split="test", prefix=global_step)
 
             result = dict((k + ("_{}".format(global_step) if global_step else ""), v) for k, v in result.items())
             results.update(result)

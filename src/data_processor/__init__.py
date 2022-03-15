@@ -10,4 +10,3 @@
 
 from .my_datasets import load_dataset as load_my_dataset
 from .data_processor import DataProcessor
-from .uda_processor import UDAProcessor

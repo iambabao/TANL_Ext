@@ -42,6 +42,7 @@ class BasicBaseDataset(BaseDataset):
     default_output_format = 'full'
 
     def load_cached_data(self, cached_file):
+        logger.info('Loading cached data from: {}'.format(cached_file))
         d = torch.load(cached_file)
         self.entity_types = d['entity_types']
         self.relation_types = d['relation_types']
@@ -49,6 +50,7 @@ class BasicBaseDataset(BaseDataset):
         self.features = d['features']
 
     def save_data(self, cached_file):
+        logger.info('Saving cached data into: {}'.format(cached_file))
         torch.save({
             'entity_types': self.entity_types,
             'relation_types': self.relation_types,
@@ -124,6 +126,8 @@ class BasicBaseDataset(BaseDataset):
         # compute correct entities
         correct_entities = predicted_entities & gt_entities
         correct_entities_no_type = gt_entities_no_type & predicted_entities_no_type
+        if self.default_output_format in ['entity_boundary']:
+            correct_entities = correct_entities_no_type
 
         # load ground truth relations
         gt_relations = set(relation.to_tuple() for relation in example.relations)

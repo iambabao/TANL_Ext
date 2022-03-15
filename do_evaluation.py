@@ -1,90 +1,184 @@
-# -*- coding: utf-8 -*-
+# -*- coding:utf-8  -*-
 
 """
-@Author             :
-@Date               : 2020/7/26
+@Author             : Bao
+@Date               : 2021/3/30
 @Desc               :
 @Last modified by   : Bao
-@Last modified date : 2021/5/14
+@Last modified date : 2021/3/30
 """
 
 import argparse
+import configparser
 import logging
+import os
+import torch
 from tqdm import tqdm
-from transformers import AutoTokenizer
+from torch.utils.data import TensorDataset, DataLoader, SequentialSampler
+from transformers import AutoTokenizer, AutoConfig, AutoModelForSeq2SeqLM
 
 from src.data_processor import load_my_dataset as load_dataset
-from src.utils.my_utils import init_logger, read_json_lines, save_json, format_data
+from src.utils.my_utils import init_logger, parse_data_args, save_json, save_json_lines, format_data
 
 logger = logging.getLogger(__name__)
 
 
 def main():
-    # parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_name_or_path', type=str, default='', help='')
-    parser.add_argument('--cache_dir', type=str, default=None, help='')
-    parser.add_argument('--data_dir', type=str, required=True, help='')
-    parser.add_argument('--dataset_name', type=str, required=True, help='')
-    parser.add_argument('--dataset_split', type=str, required=True, help='')
-    parser.add_argument('--max_seq_length', type=int, required=True, help='')
-    parser.add_argument('--max_output_seq_length', type=int, default=None, help='')
-    parser.add_argument('--max_seq_length_eval', type=int, default=None, help='')
-    parser.add_argument('--max_output_seq_length_eval', type=int, default=None, help='')
-    parser.add_argument('--do_lower_case', action='store_true', help='')
-    parser.add_argument('--overwrite_cache', type=bool, default=True, help='')
-    parser.add_argument('--prefix', action='store_true', help='')
-    parser.add_argument('--generated_outputs', type=str, required=True, help='')
-    parser.add_argument('--output_file', type=str, required=True, help='')
-    parser.add_argument('--log_file', type=str, default=None, help='')
+    parser.add_argument("--tasks", required=True, type=str, help="")
+    parser.add_argument("--splits", required=True, type=str, help="")
+    parser.add_argument("--prefix", action="store_true", help="")
+    parser.add_argument("--model_name_or_path", required=True, type=str, help="")
+    parser.add_argument("--max_src_length", default=128, type=int, help="")
+    parser.add_argument("--max_tgt_length", default=128, type=int, help="")
+    parser.add_argument("--do_lower_case", action="store_true", help="")
+    parser.add_argument("--data_dir", required=True, type=str, help="")
+    parser.add_argument("--output_dir", required=True, type=str, help="")
+    parser.add_argument("--log_file", default=None, type=str, help="")
+    parser.add_argument("--overwrite_cache", action="store_true", help="")
+    parser.add_argument("--batch_size", default=16, type=int, help="")
+    parser.add_argument("--no_cuda", action="store_true", help="")
     args = parser.parse_args()
 
-    # the order is slightly different from original code
-    if args.max_output_seq_length is None:
-        args.max_output_seq_length = args.max_seq_length
-    if args.max_seq_length_eval is None:
-        args.max_seq_length_eval = args.max_seq_length
-    if args.max_output_seq_length_eval is None:
-        args.max_output_seq_length_eval = args.max_output_seq_length
+    args.task_list = args.tasks.split(",")
+    args.split_list = args.splits.strip().split(",")
 
-    # setup logging
     init_logger(logging.INFO, args.log_file)
-    logger.info('args: {}'.format(args))
 
-    logger.info('Loading tokenizer')
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+    logger.info('Loading model from: {}'.format(args.model_name_or_path))
+    config = AutoConfig.from_pretrained(args.model_name_or_path)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
+    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name_or_path, config=config)
+    device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    model.to(device)
+    model.eval()
 
-    logger.info('Loading dataset')
-    dataset = load_dataset(
-        dataset_name=args.dataset_name,
-        data_args=args,
-        tokenizer=tokenizer,
-        max_input_length=args.max_seq_length_eval,
-        max_output_length=args.max_output_seq_length_eval,
-        split=args.dataset_split,
-    )
+    logger.info("Evaluation parameters %s", args)
+    logger.info("Evaluation config %s", config)
 
-    generated_outputs = list(line['generated'] for line in read_json_lines(args.generated_outputs))
-    assert len(dataset.examples) == len(generated_outputs)
+    for task in args.task_list:
+        for split in args.split_list:
+            data_args = parse_data_args(args, task, split)
+            dataset  = load_dataset(
+                dataset_name=data_args.dataset_name,
+                data_args=data_args,
+                tokenizer=tokenizer,
+                max_input_length=data_args.max_seq_length_eval,
+                max_output_length=data_args.max_output_seq_length_eval,
+                split=data_args.dataset_split,
+            )
+            data_args_s1 = parse_data_args(args, "{}_s1".format(task), split)
+            dataset_s1 = load_dataset(
+                dataset_name=data_args_s1.dataset_name,
+                data_args=data_args_s1,
+                tokenizer=tokenizer,
+                max_input_length=data_args_s1.max_seq_length_eval,
+                max_output_length=data_args_s1.max_output_seq_length_eval,
+                split=data_args_s1.dataset_split,
+            )
+            data_args_s2 = parse_data_args(args, "{}_s2".format(task), split)
+            dataset_s2 = load_dataset(
+                dataset_name=data_args_s2.dataset_name,
+                data_args=data_args_s2,
+                tokenizer=tokenizer,
+                max_input_length=data_args_s2.max_seq_length_eval,
+                max_output_length=data_args_s2.max_output_seq_length_eval,
+                split=data_args_s2.dataset_split,
+            )
 
-    results = dataset.evaluate_generated_outputs(generated_outputs)
-    for key, value in results.items():
-        logger.info('{}: {}'.format(key, value))
+            if not args.prefix:
+                inputs = [" ".join(_.tokens) for _ in dataset_s1.examples]
+            else:
+                inputs = ["{} : {}".format(dataset_s1.task_descriptor, " ".join(_.tokens)) for _ in dataset_s1.examples]
+            encoded = tokenizer.batch_encode_plus(
+                inputs,
+                padding="max_length",
+                truncation="longest_first",
+                max_length=args.max_src_length,
+                return_tensors="pt",
+            )
+            eval_dataset = TensorDataset(encoded["input_ids"], encoded["attention_mask"])
+            eval_sampler = SequentialSampler(eval_dataset)
+            eval_data_loader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.batch_size)
 
-    outputs = []
-    for example, output_sentence in tqdm(zip(dataset.examples, generated_outputs)):
-        tokens = example.tokens
-        parsed_outputs = dataset.output_format.run_inference(
-            example,
-            output_sentence,
-            entity_types=dataset.entity_types,
-            relation_types=dataset.relation_types,
-        )
-        parsed_entities, parsed_relations = parsed_outputs[0], parsed_outputs[1]
-        parsed_entities, parsed_relations = format_data(tokens, parsed_entities, parsed_relations)
-        outputs.append({'context': ' '.join(tokens), 'entities': parsed_entities, 'relations': parsed_relations})
-    save_json(outputs, args.output_file)
+            eval_outputs_s1 = []
+            with torch.no_grad():
+                for batch in tqdm(eval_data_loader, desc="Evaluating (stage 1)"):
+                    inputs = {
+                        "input_ids": batch[0].to(device),
+                        "attention_mask": batch[1].to(device),
+                    }
+                    outputs = model.generate(**inputs, max_length=args.max_tgt_length)
+                    eval_outputs_s1.extend(outputs.detach().cpu().tolist())
+            eval_outputs_s1 = tokenizer.batch_decode(
+                eval_outputs_s1,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False
+            )
+
+            if not args.prefix:
+                inputs = eval_outputs_s1
+            else:
+                inputs = ["{} : {}".format(dataset_s2.task_descriptor, _) for _ in eval_outputs_s1]
+            encoded = tokenizer.batch_encode_plus(
+                inputs,
+                padding="max_length",
+                truncation="longest_first",
+                max_length=args.max_src_length,
+                return_tensors="pt",
+            )
+            eval_dataset = TensorDataset(encoded["input_ids"], encoded["attention_mask"])
+            eval_sampler = SequentialSampler(eval_dataset)
+            eval_data_loader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.batch_size)
+
+            eval_outputs_s2 = []
+            with torch.no_grad():
+                for batch in tqdm(eval_data_loader, desc="Evaluating (stage 2)"):
+                    inputs = {
+                        "input_ids": batch[0].to(device),
+                        "attention_mask": batch[1].to(device),
+                    }
+                    outputs = model.generate(**inputs, max_length=args.max_tgt_length)
+                    eval_outputs_s2.extend(outputs.detach().cpu().tolist())
+            eval_outputs_s2 = tokenizer.batch_decode(
+                eval_outputs_s2,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False
+            )
+
+            outputs = []
+            for example, o1, o2 in tqdm(zip(dataset.examples, eval_outputs_s1, eval_outputs_s2), desc="Parsing results"):
+                generated_output = dataset.output_format.run_inference(
+                    example, o2,
+                    entity_types=dataset.entity_types,
+                    relation_types=dataset.relation_types,
+                )
+                generated_entities, generated_relations = generated_output[:2]
+                generated_entities, generated_relations = format_data(
+                    tokens=example.tokens,
+                    entities=generated_entities,
+                    relations=generated_relations,
+                )
+                outputs.append({
+                    "context": " ".join(example.tokens),
+                    "s1": o1, "s2": o2,
+                    "entities": generated_entities,
+                    "relations": generated_relations,
+                })
+
+            results_s1 = dataset_s1.evaluate_generated_outputs(eval_outputs_s1)
+            for key, value in results_s1.items():
+                logger.info("{}: {}".format(key, value))
+            results_s2 = dataset_s2.evaluate_generated_outputs(eval_outputs_s2)
+            for key, value in results_s2.items():
+                logger.info("{}: {}".format(key, value))
+            results = {"s1": results_s1, "s2": results_s2}
+
+            save_json(outputs, os.path.join(args.output_dir, "{}_{}_outputs.pipeline.json"))
+            save_json(results, os.path.join(args.output_dir, "{}_{}_results.pipeline.json"))
+
+    logger.info("Done!")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

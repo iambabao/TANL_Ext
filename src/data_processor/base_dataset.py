@@ -29,9 +29,6 @@ class BaseDataset(Dataset, ABC):
     default_output_format = 'full'
     default_data_dir = 'data'
 
-    input_sentences = None
-    output_sentences = None
-
     def __init__(
             self,
             tokenizer: PreTrainedTokenizer,
@@ -58,7 +55,7 @@ class BaseDataset(Dataset, ABC):
             "cached_{}_{}_{}_{}_{}_{}.bin".format(
                 self.name,
                 mode,
-                list(filter(None, data_args.model_name_or_path.split("/"))).pop(),
+                tokenizer.__class__.__name__,
                 max_input_length,
                 max_output_length,
                 "raw" if not data_args.prefix else "prefix",
@@ -116,10 +113,12 @@ class BaseDataset(Dataset, ABC):
             return os.path.join(self.data_path, self.name)
 
     def load_cached_data(self, cached_data_file: str):
+        logging.info('Loading cached data from: {}'.format(cached_data_file))
         d = torch.load(cached_data_file)
         self.examples, self.features = d['examples'], d['features']
 
     def save_data(self, cached_data_file: str):
+        logging.info('Saving cached data into: {}'.format(cached_data_file))
         torch.save({'examples': self.examples, 'features': self.features}, cached_data_file)
 
     def load_schema(self):
@@ -163,8 +162,6 @@ class BaseDataset(Dataset, ABC):
     def compute_features(self, max_input_length: int, max_output_length: int, prefix: bool = False):
         input_sentences = [self.input_format.format_input(example, prefix=prefix) for example in self.examples]
         output_sentences = [self.output_format.format_output(example) for example in self.examples]
-        self.input_sentences = input_sentences
-        self.output_sentences = output_sentences
 
         input_tok = self.tokenizer.batch_encode_plus(
             input_sentences,
@@ -185,17 +182,25 @@ class BaseDataset(Dataset, ABC):
         self._warn_max_sequence_length(max_output_length, output_sentences, "output")
 
         assert input_tok.input_ids.size(0) == output_tok.input_ids.size(0)
-    
+
         features = []
-        for sentence_input_ids, att_mask, label_input_ids in zip(
+        for index, (input_ids, attention_mask, label_ids) in enumerate(zip(
                 input_tok.input_ids, input_tok.attention_mask, output_tok.input_ids
-        ):
+        )):
             features.append(InputFeatures(
-                input_ids=sentence_input_ids.tolist(),
-                attention_mask=att_mask.tolist(),
-                label_ids=label_input_ids.tolist()
+                input_ids=input_ids.tolist(),
+                attention_mask=attention_mask.tolist(),
+                label_ids=label_ids.tolist(),
             ))
-    
+
+            if index < 5:
+                logging.info("*** Example ***")
+                logging.info("input_ids: {}".format(input_ids.tolist()))
+                logging.info("attention_mask: {}".format(attention_mask.tolist()))
+                logging.info("labels_ids: {}".format(label_ids.tolist()))
+                logging.info("source: {}".format(self.tokenizer.decode(input_ids, skip_special_tokens=True)))
+                logging.info("target: {}".format(self.tokenizer.decode(label_ids, skip_special_tokens=True)))
+
         return features
 
     def generate_output_sentences(

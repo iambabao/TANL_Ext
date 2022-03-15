@@ -74,7 +74,9 @@ class BaseOutputFormat(ABC):
         for entity_name, tags, start, end in raw_predicted_entities:
             if len(tags) == 0 or len(tags[0]) > 1:
                 # we do not have a tag for the entity type
-                format_error = True
+                entity_tuple = ('none', start, end)
+                predicted_entities.add(entity_tuple)
+                predicted_entities_by_name[entity_name].append(entity_tuple)
                 continue
 
             entity_type = tags[0][0]
