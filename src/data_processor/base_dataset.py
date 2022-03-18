@@ -34,22 +34,20 @@ class BaseDataset(Dataset, ABC):
             tokenizer: PreTrainedTokenizer,
             max_input_length: int,
             max_output_length: int,
+            data_args = None,
             mode: str = 'train',
             local_rank: int = -1,
-            train_subset: float = 1,  # a number < 1 is to use only a subset of training data (random)
-            data_args = None,
     ):
-        self.data_args = data_args
         self.tokenizer = tokenizer
-        self.prefix = data_args.prefix
-
         self.max_input_length = max_input_length
         self.max_output_length = max_output_length
 
         self.input_format = INPUT_FORMATS[self.default_input_format]()
         self.output_format = OUTPUT_FORMATS[self.default_output_format]()
 
-        self.data_path = data_args.data_dir if data_args.data_dir is not None else self.default_data_dir
+        self.data_args = data_args
+        self.prefix = data_args.prefix
+        self.data_path = data_args.data_dir or self.default_data_dir
         cached_data_file = os.path.join(
             self.data_dir(),
             "cached_{}_{}_{}_{}_{}_{}.bin".format(
@@ -70,7 +68,7 @@ class BaseDataset(Dataset, ABC):
             if os.path.exists(cached_data_file) and not self.data_args.overwrite_cache:
                 self.load_cached_data(cached_data_file)
             else:
-                self.load_schema()   # here the dataset can load information such as entity/relation types
+                self.load_schema()
                 self.examples = self.load_data(mode=mode)
 
                 # assign examples to this dataset
@@ -83,34 +81,24 @@ class BaseDataset(Dataset, ABC):
                     prefix=data_args.prefix,
                 )
 
+                # save data
                 if local_rank in [-1, 0]:
-                    # save data
                     self.save_data(cached_data_file)
-
-            self.indices = list(range(len(self.examples)))
-
-            # compute effective size of the dataset
-            self.effective_size = round(train_subset * len(self.examples))
-            if train_subset != 1:
-                logging.info(f"Effective dataset size reduced to {self.effective_size} ({train_subset * 100:.0f}%)")
 
     def __repr__(self):
         return f'Dataset {self.name}'
 
     def __len__(self):
-        return self.effective_size
+        return len(self.examples)
 
     def __getitem__(self, i: int) -> InputFeatures:
-        return self.features[self.indices[i]]
+        return self.features[i]
 
     def get_example(self, i: int) -> InputExample:
-        return self.examples[self.indices[i]]
+        return self.examples[i]
 
     def data_dir(self):
-        if self.data_name is not None:
-            return os.path.join(self.data_path, self.data_name)
-        else:
-            return os.path.join(self.data_path, self.name)
+        return os.path.join(self.data_path, self.data_name or self.name)
 
     def load_cached_data(self, cached_data_file: str):
         logging.info('Loading cached data from: {}'.format(cached_data_file))
@@ -159,9 +147,16 @@ class BaseDataset(Dataset, ABC):
                 f'{max_length_needed} long'
             )
 
-    def compute_features(self, max_input_length: int, max_output_length: int, prefix: bool = False):
-        input_sentences = [self.input_format.format_input(example, prefix=prefix) for example in self.examples]
-        output_sentences = [self.output_format.format_output(example) for example in self.examples]
+    def compute_features(self, max_input_length, max_output_length, prefix=False, keep_entity=0.00):
+        input_sentences = [self.input_format.format_input(
+            example,
+            prefix=prefix,
+            keep_entity=keep_entity
+        ) for example in tqdm(self.examples, desc='Format input sentences')]
+        output_sentences = [
+            self.output_format.format_output(example)
+            for example in tqdm(self.examples, desc='Format output sentences')
+        ]
 
         input_tok = self.tokenizer.batch_encode_plus(
             input_sentences,

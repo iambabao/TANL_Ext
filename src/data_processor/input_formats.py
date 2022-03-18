@@ -3,6 +3,7 @@
 
 
 from abc import ABC, abstractmethod
+import random
 
 from src.data_processor.input_example import InputExample
 from src.utils.tanl_utils import augment_sentence
@@ -24,15 +25,15 @@ class BaseInputFormat(ABC):
     RELATION_SEPARATOR_TOKEN = '='
     QUERY_SEPARATOR_TOKEN = ':'
 
-    def format_input(self, example: InputExample, prefix=False, task_descriptor=None):
-        res = self._format_input(example=example)
+    def format_input(self, example: InputExample, prefix=False, task_descriptor=None, keep_entity=1.00):
+        res = self._format_input(example=example, keep_entity=keep_entity)
         if prefix:
             name = task_descriptor or example.dataset.task_descriptor or example.dataset.name
             res = f'{name} {self.QUERY_SEPARATOR_TOKEN} ' + res
         return res
 
     @abstractmethod
-    def _format_input(self, example: InputExample) -> str:
+    def _format_input(self, example: InputExample, keep_entity: float) -> str:
         raise NotImplementedError
 
 
@@ -43,7 +44,7 @@ class PlainInputFormat(BaseInputFormat):
     """
     name = 'plain'
 
-    def _format_input(self, example: InputExample) -> str:
+    def _format_input(self, example: InputExample, keep_entity: float) -> str:
         return ' '.join(example.tokens)
 
 
@@ -54,7 +55,7 @@ class EntityInputFormat(BaseInputFormat):
     """
     name = 'entity'
 
-    def _format_input(self, example: InputExample) -> str:
+    def _format_input(self, example: InputExample, keep_entity: float) -> str:
         augmentations = [([(entity.type.natural,)], entity.start, entity.end) for entity in example.entities]
 
         return augment_sentence(
@@ -71,8 +72,10 @@ class EntityBoundaryInputFormat(BaseInputFormat):
     """
     name = 'entity_boundary'
 
-    def _format_input(self, example: InputExample) -> str:
-        augmentations = [([], entity.start, entity.end) for entity in example.entities]
+    def _format_input(self, example: InputExample, keep_entity: float) -> str:
+        augmentations = [
+            ([], entity.start, entity.end) for entity in example.entities if random.random() < keep_entity
+        ]
 
         return augment_sentence(
             example.tokens, augmentations,

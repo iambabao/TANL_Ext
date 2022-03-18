@@ -18,17 +18,13 @@ def register_dataset(dataset_class):
     return dataset_class
 
 
-def load_dataset(
-        dataset_name, data_args, tokenizer, split,
-        max_input_length, max_output_length, train_subset=1.0,
-):
+def load_dataset(dataset_name, data_args, tokenizer, split, max_input_length, max_output_length):
     return DATASETS[dataset_name](
         tokenizer=tokenizer,
         max_input_length=max_input_length,
         max_output_length=max_output_length,
-        mode=split,
-        train_subset=train_subset,
         data_args=data_args,
+        mode=split,
     )
 
 

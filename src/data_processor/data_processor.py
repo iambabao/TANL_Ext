@@ -20,10 +20,31 @@ class DataProcessor:
         self.datasets = datasets
         self.tokenizer = tokenizer
 
-    def create_tensor_dataset(self, tasks, split):
+    def create_tensor_dataset(self, tasks, split, keep_entity=1.00):
         input_ids, attention_mask, label_ids = [], [], []
-        for task in tasks:
-            for feature in self.datasets[task][split].features:
+        for task_id, task in enumerate(tasks):
+            dataset = self.datasets[task][split]
+            if isinstance(keep_entity, float):
+                if keep_entity == 1.00:
+                    features = dataset.features
+                else:
+                    features = dataset.compute_features(
+                        max_input_length=dataset.max_input_length,
+                        max_output_length=dataset.max_output_length,
+                        prefix=dataset.data_args.prefix,
+                        keep_entity=keep_entity,
+                    )
+            elif isinstance(keep_entity, list):
+                assert len(tasks) == len(keep_entity)
+                features = dataset.compute_features(
+                    max_input_length=dataset.max_input_length,
+                    max_output_length=dataset.max_output_length,
+                    prefix=dataset.data_args.prefix,
+                    keep_entity=keep_entity[task_id],
+                )
+            else:
+                raise ValueError("except float or list, but '{}' is given".format(keep_entity))
+            for feature in features:
                 input_ids.append(feature.input_ids)
                 attention_mask.append(feature.attention_mask)
                 label_ids.append(feature.label_ids)

@@ -54,7 +54,7 @@ def save_checkpoint(output_dir, model, tokenizer, args):
 
 def train(args, data_processor, model, split):
     args.train_batch_size = args.per_device_train_batch_size * max(1, args.n_gpu)
-    train_dataset = data_processor.create_tensor_dataset(args.task_list, split=split)
+    train_dataset = data_processor.create_tensor_dataset(args.task_list, split=split, keep_entity=args.keep_entity)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
 
@@ -227,6 +227,7 @@ def main():
     # Datasets parameters
     parser.add_argument("--task", required=True, type=str, help="")
     parser.add_argument("--prefix", action="store_true", help="")
+    parser.add_argument("--keep_entity", default=1.00, type=float, help="")
 
     # Model hyper parameters
     parser.add_argument(
@@ -378,10 +379,11 @@ def main():
         os.makedirs(args.log_dir, exist_ok=True)
         args.log_file = os.path.join(
             args.log_dir,
-            "{}_{}_{}_{}_{}_{:.1e}.txt".format(
+            "{}_{}_{}_{:.2f}_{}_{}_{:.1e}.txt".format(
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
+                args.keep_entity,
                 "raw" if not args.prefix else "prefix",
                 "uncased" if args.do_lower_case else "cased",
                 args.learning_rate,
@@ -439,10 +441,11 @@ def main():
     if args.do_train:
         args.output_dir = os.path.join(
             args.output_dir,
-            "{}_{}_{}_{}_{}_{:.1e}".format(
+            "{}_{}_{}_{:.2f}_{}_{}_{:.1e}".format(
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
+                args.keep_entity,
                 "raw" if not args.prefix else "prefix",
                 "uncased" if args.do_lower_case else "cased",
                 args.learning_rate,
