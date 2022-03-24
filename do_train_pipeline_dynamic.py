@@ -18,7 +18,7 @@ import torch
 import torch.distributed as dist
 from tqdm import tqdm
 from collections import defaultdict
-from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
+from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from transformers import (
 set_seed,
@@ -31,6 +31,7 @@ get_linear_schedule_with_warmup,
 )
 
 from src.data_processor import DataProcessor, load_my_dataset as load_dataset
+from src.utils.tanl_utils import augment_sentence
 from src.utils.my_utils import (
 init_logger,
 save_json,
@@ -51,17 +52,73 @@ def save_checkpoint(output_dir, model, tokenizer, args):
     torch.save(args, os.path.join(output_dir, "training_args.bin"))
 
 
-def train(args, data_processor, model, split):
-    args.train_batch_size = args.per_device_train_batch_size * max(1, args.n_gpu)
-    train_dataset = data_processor.create_tensor_dataset(args.task_list, split=split, keep_entity=args.keep_entity)
-    train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+def generate_data_during_training(args, data_processor, model, split):
+    model = model.module if hasattr(model, "module") else model
 
+    dataset = data_processor.create_tensor_dataset(args.task_s1_list, split=split)
+    sampler = SequentialSampler(dataset)
+    data_loader = DataLoader(dataset, sampler=sampler, batch_size=args.eval_batch_size)
+
+    logger.info("***** Running inference *****")
+    logger.info("Num examples = %d", len(dataset))
+    logger.info("Batch size = %d", args.eval_batch_size)
+
+    output_ids = []
+    for batch in tqdm(data_loader, desc="Inference"):
+        model.eval()
+        with torch.no_grad():
+            inputs = {
+                "input_ids": batch[0].to(args.device),
+                "attention_mask": batch[1].to(args.device),
+            }
+            outputs = model.generate(**inputs, max_length=args.max_tgt_length)
+            output_ids.extend(outputs.detach().cpu().tolist())
+    output_sentences = data_processor.tokenizer.batch_decode(
+        output_ids,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False,
+    )
+
+    shift = 0
+    results = {}
+    input_sentences = []
+    for task in args.task_s1_list:
+        dataset = data_processor.datasets[task][split]
+        results[task] = dataset.evaluate_generated_outputs(output_sentences[shift:shift + len(dataset)])
+        for example, sentence in zip(dataset.examples, output_sentences[shift:]):
+            parsed_outputs = dataset.output_format.run_inference(
+                example, sentence,
+                entity_types=dataset.entity_types,
+                relation_types=dataset.relation_types,
+            )
+            generated_entities = parsed_outputs[0]
+            augmentations = [([], start, end) for _, start, end in generated_entities]
+            input_sentences.append(augment_sentence(
+                example.tokens, augmentations,
+                dataset.input_format.BEGIN_ENTITY_TOKEN, dataset.input_format.SEPARATOR_TOKEN,
+                dataset.input_format.RELATION_SEPARATOR_TOKEN, dataset.input_format.END_ENTITY_TOKEN
+            ))
+        shift += len(dataset)
+    logger.info(json.dumps(results, ensure_ascii=False, indent=4))
+
+    encoded = data_processor.tokenizer.batch_encode_plus(
+        input_sentences,
+        padding="max_length",
+        truncation="longest_first",
+        max_length=args.max_src_length,
+        return_tensors="pt",
+    )
+
+    return encoded["input_ids"], encoded["attention_mask"]
+
+
+def train(args, data_processor, model, split):
+    num_examples = sum(len(data_processor.datasets[task][split]) for task in args.task_list)
     if args.max_steps > 0:
         t_total = args.max_steps
-        args.num_train_epochs = args.max_steps // len(train_dataloader) + 1
+        args.num_train_epochs = args.max_steps // num_examples + 1
     else:
-        t_total = len(train_dataloader) * args.num_train_epochs
+        t_total = num_examples * args.num_train_epochs
 
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ["bias", "LayerNorm.weight"]
@@ -92,7 +149,7 @@ def train(args, data_processor, model, split):
 
     # Train!
     logger.info("***** Running training *****")
-    logger.info("Num examples = %d", len(train_dataset))
+    logger.info("Num examples = %d", num_examples)
     logger.info("Num Epochs = %d", args.num_train_epochs)
     logger.info("Instantaneous batch size per GPU = %d", args.per_device_train_batch_size)
     logger.info(
@@ -102,16 +159,36 @@ def train(args, data_processor, model, split):
     )
     logger.info("Total optimization steps = %d", t_total)
 
+    input_ids_s1, attention_mask_s1, label_ids_s1 = data_processor.create_tensor_dataset(
+        args.task_s1_list,
+        split=split,
+        return_tensor=True,
+    )
+    input_ids_s2, attention_mask_s2, label_ids_s2 = data_processor.create_tensor_dataset(
+        args.task_s2_list,
+        split=split,
+        return_tensor=True,
+    )
+
     global_step = 0
     training_loss = 0.0
     early_stop_flag = 0
     current_score, best_score = -float("inf"), -float("inf")
     set_seed(args.seed)
     model.zero_grad()
-    for _ in range(int(args.num_train_epochs)):
-        # train_dataset = data_processor.create_tensor_dataset(args.task_list, split=split, keep_entity=args.keep_entity)
-        # train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-        # train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+    for epoch_id in range(1, int(args.num_train_epochs) + 1):
+        if epoch_id > args.num_pretrain_epochs and epoch_id % args.generate_data_per_epochs == 0:
+            if args.local_rank in [-1, 0]:
+                input_ids_s2, attention_mask_s2 = generate_data_during_training(args, data_processor, model, split)
+            if args.local_rank != -1:
+                torch.distributed.barrier()  # wait if needed
+        input_ids = torch.cat([input_ids_s1, input_ids_s2], dim=0)
+        attention_mask = torch.cat([attention_mask_s1, attention_mask_s2], dim=0)
+        label_ids = torch.cat([label_ids_s1, label_ids_s2], dim=0)
+
+        train_dataset = TensorDataset(input_ids, attention_mask, label_ids)
+        train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
+        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
             model.train()
@@ -165,7 +242,7 @@ def train(args, data_processor, model, split):
                         save_checkpoint(args.output_dir, model, data_processor.tokenizer, args)
 
             if args.local_rank != -1:
-                torch.distributed.barrier()  # wait for evaluation if needed
+                torch.distributed.barrier()  # wait if needed
 
             if 0 < args.early_stop < early_stop_flag or 0 < args.max_steps < global_step:
                 epoch_iterator.close()
@@ -186,7 +263,6 @@ def evaluate(args, data_processor, model, split, prefix=""):
         output_dir = os.path.join(args.output_dir, "checkpoint-{}".format(prefix))
     os.makedirs(output_dir, exist_ok=True)
 
-    args.eval_batch_size = args.per_device_eval_batch_size * max(1, args.n_gpu)
     eval_dataset = data_processor.create_tensor_dataset(args.task_list, split)
     eval_sampler = SequentialSampler(eval_dataset)
     eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
@@ -229,7 +305,6 @@ def main():
     # Datasets parameters
     parser.add_argument("--task", required=True, type=str, help="")
     parser.add_argument("--prefix", action="store_true", help="")
-    parser.add_argument("--keep_entity", default=1.00, type=float, help="")
 
     # Model hyper parameters
     parser.add_argument(
@@ -326,6 +401,8 @@ def main():
     parser.add_argument(
         "--num_train_epochs", default=3.0, type=float, help="Total number of training epochs to perform."
     )
+    parser.add_argument("--num_pretrain_epochs", default=3, type=int, help="")
+    parser.add_argument("--generate_data_per_epochs", default=1, type=int, help="")
     parser.add_argument("--early_stop", default=0, type=int, help="Early stop strategy.")
     parser.add_argument(
         "--max_steps",
@@ -362,6 +439,8 @@ def main():
             args.task_list = sorted(eval(training_config[args.task]["task_list"]))
         else:
             args.task_list = sorted(args.task.split(","))
+        args.task_s1_list = [task for task in args.task_list if task.endswith("s1")]
+        args.task_s2_list = [task for task in args.task_list if task.endswith("s2")]
         if "num_train_epochs" in training_config[args.task]:
             args.num_train_epochs = int(training_config[args.task]["num_train_epochs"])
 
@@ -375,17 +454,20 @@ def main():
         dist.init_process_group(backend="nccl")
         args.n_gpu = 1
     args.device = device
+    args.train_batch_size = args.per_device_train_batch_size * max(1, args.n_gpu)
+    args.eval_batch_size = args.per_device_eval_batch_size * max(1, args.n_gpu)
 
     # Setup log dir
     if args.local_rank in [-1, 0] and args.log_file is None and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
         args.log_file = os.path.join(
             args.log_dir,
-            "{}_{}_{}_{:.2f}_{}_{}_{:.1e}.txt".format(
+            "{}_{}_{}_{}_{}_{}_{}_{:.1e}.txt".format(
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
-                args.keep_entity,
+                args.num_pretrain_epochs,
+                args.generate_data_per_epochs,
                 "raw" if not args.prefix else "prefix",
                 "uncased" if args.do_lower_case else "cased",
                 args.learning_rate,
@@ -443,11 +525,12 @@ def main():
     if args.do_train:
         args.output_dir = os.path.join(
             args.output_dir,
-            "{}_{}_{}_{:.2f}_{}_{}_{:.1e}".format(
+            "{}_{}_{}_{}_{}_{}_{}_{:.1e}".format(
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_src_length,
                 args.max_tgt_length,
-                args.keep_entity,
+                args.num_pretrain_epochs,
+                args.generate_data_per_epochs,
                 "raw" if not args.prefix else "prefix",
                 "uncased" if args.do_lower_case else "cased",
                 args.learning_rate,

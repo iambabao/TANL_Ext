@@ -20,7 +20,7 @@ class DataProcessor:
         self.datasets = datasets
         self.tokenizer = tokenizer
 
-    def create_tensor_dataset(self, tasks, split, keep_entity=1.00):
+    def create_tensor_dataset(self, tasks, split, keep_entity=1.00, return_tensor=False):
         input_ids, attention_mask, label_ids = [], [], []
         for task_id, task in enumerate(tasks):
             dataset = self.datasets[task][split]
@@ -48,7 +48,9 @@ class DataProcessor:
                 input_ids.append(feature.input_ids)
                 attention_mask.append(feature.attention_mask)
                 label_ids.append(feature.label_ids)
-        input_ids = torch.tensor(input_ids)
-        attention_mask = torch.tensor(attention_mask)
-        label_ids = torch.tensor(label_ids)
+        input_ids = torch.tensor(input_ids, dtype=torch.long)
+        attention_mask = torch.tensor(attention_mask, dtype=torch.long)
+        label_ids = torch.tensor(label_ids, dtype=torch.long)
+        if return_tensor:
+            return input_ids, attention_mask, label_ids
         return TensorDataset(input_ids, attention_mask, label_ids)

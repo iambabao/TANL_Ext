@@ -11,6 +11,7 @@
 import argparse
 import logging
 import os
+import json
 import torch
 from tqdm import tqdm
 from torch.utils.data import TensorDataset, DataLoader, SequentialSampler
@@ -179,12 +180,9 @@ def main():
         })
 
     results_s1 = dataset_s1.evaluate_generated_outputs(eval_outputs_s1)
-    for key, value in results_s1.items():
-        logger.info("{}: {}".format(key, value))
     results_s2 = dataset_s2.evaluate_generated_outputs(eval_outputs_s2)
-    for key, value in results_s2.items():
-        logger.info("{}: {}".format(key, value))
-    results = {"s1": results_s1, "s2": results_s2}
+    results = {"Stage_1": results_s1, "Stage_2": results_s2}
+    logger.info(json.dumps(results, ensure_ascii=False, indent=4))
 
     save_json(outputs, os.path.join(args.output_dir, "{}_{}_outputs.pipeline.json".format(args.split, args.task)))
     save_json(results, os.path.join(args.output_dir, "{}_{}_results.pipeline.json".format(args.split, args.task)))
