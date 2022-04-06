@@ -65,11 +65,11 @@ def main():
     )
 
     if not args.prefix:
-        inputs = [" ".join(_.tokens) for _ in dataset_s1.examples]
+        eval_inputs_s1 = [" ".join(_.tokens) for _ in dataset_s1.examples]
     else:
-        inputs = ["{} : {}".format(dataset_s1.task_descriptor, " ".join(_.tokens)) for _ in dataset_s1.examples]
+        eval_inputs_s1 = ["{} : {}".format(dataset_s1.task_descriptor, " ".join(_.tokens)) for _ in dataset_s1.examples]
     encoded = tokenizer_s1.batch_encode_plus(
-        inputs,
+        eval_inputs_s1,
         padding="max_length",
         truncation="longest_first",
         max_length=args.max_src_length,
@@ -116,7 +116,7 @@ def main():
         split=data_args_s2.dataset_split,
     )
 
-    inputs = []
+    eval_inputs_s2 = []
     for example, sentence, in zip(dataset_s1.examples, eval_outputs_s1):
         generated_output = dataset_s1.output_format.run_inference(
             example, sentence,
@@ -125,15 +125,15 @@ def main():
         )
         generated_entities = generated_output[0]
         augmentations = [([], start, end) for _, start, end in generated_entities]
-        inputs.append(augment_sentence(
+        eval_inputs_s2.append(augment_sentence(
             example.tokens, augmentations,
             dataset_s1.input_format.BEGIN_ENTITY_TOKEN, dataset_s1.input_format.SEPARATOR_TOKEN,
             dataset_s1.input_format.RELATION_SEPARATOR_TOKEN, dataset_s1.input_format.END_ENTITY_TOKEN
         ))
     if args.prefix:
-        inputs = ["{} : {}".format(dataset_s2.task_descriptor, _) for _ in inputs]
+        eval_inputs_s2 = ["{} : {}".format(dataset_s2.task_descriptor, _) for _ in eval_inputs_s2]
     encoded = tokenizer_s2.batch_encode_plus(
-        inputs,
+        eval_inputs_s2,
         padding="max_length",
         truncation="longest_first",
         max_length=args.max_src_length,
@@ -161,6 +161,13 @@ def main():
 
     outputs = []
     for example, o1, o2 in zip(dataset_s2.examples, eval_outputs_s1, eval_outputs_s2):
+        golden_entities = [entity.to_tuple() for entity in example.entities]
+        golden_relations = [relation.to_tuple() for relation in example.relations]
+        golden_entities, golden_relations = format_data(
+            tokens=example.tokens,
+            entities=golden_entities,
+            relations=golden_relations,
+        )
         generated_output = dataset_s2.output_format.run_inference(
             example, o2,
             entity_types=dataset_s2.entity_types,
@@ -175,8 +182,10 @@ def main():
         outputs.append({
             "context": " ".join(example.tokens),
             "s1": o1, "s2": o2,
-            "entities": generated_entities,
-            "relations": generated_relations,
+            "golden_entities": golden_entities,
+            "golden_relations": golden_relations,
+            "generated_entities": generated_entities,
+            "generated_relations": generated_relations,
         })
 
     results_s1 = dataset_s1.evaluate_generated_outputs(eval_outputs_s1)

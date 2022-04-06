@@ -114,6 +114,9 @@ class BasicBaseDataset(BaseDataset):
             wrong_reconstruction = label_error = entity_error = format_error = False
 
         predicted_entities_no_type = set([entity[1:] for entity in predicted_entities])
+        predicted_relations_no_type = set(
+            [(relation[0],) + relation[1][1:] + relation[2][1:] for relation in predicted_relations]
+        )
 
         # load ground truth entities
         gt_entities = set(entity.to_tuple() for entity in example.entities)
@@ -127,9 +130,11 @@ class BasicBaseDataset(BaseDataset):
 
         # load ground truth relations
         gt_relations = set(relation.to_tuple() for relation in example.relations)
+        gt_relations_no_type = set((relation[0],) + relation[1][1:] + relation[2][1:] for relation in gt_relations)
 
         # compute correct relations
         correct_relations = predicted_relations & gt_relations
+        correct_relations_no_type = predicted_relations_no_type & gt_relations_no_type
 
         assert len(correct_entities) <= len(predicted_entities)
         assert len(correct_entities) <= len(gt_entities)
@@ -138,6 +143,8 @@ class BasicBaseDataset(BaseDataset):
 
         assert len(correct_relations) <= len(predicted_relations)
         assert len(correct_relations) <= len(gt_relations)
+        assert len(correct_relations_no_type) <= len(predicted_relations_no_type)
+        assert len(correct_relations_no_type) <= len(gt_relations_no_type)
 
         results = Counter({
             'num_sentences': 1,
@@ -154,6 +161,9 @@ class BasicBaseDataset(BaseDataset):
             'gt_relations': len(gt_relations),
             'predicted_relations': len(predicted_relations),
             'correct_relations': len(correct_relations),
+            'gt_relations_no_type': len(gt_relations_no_type),
+            'predicted_relations_no_type': len(predicted_relations_no_type),
+            'correct_relations_no_type': len(correct_relations_no_type),
         })
 
         # add information about each entity/relation type so that we can compute the macro-F1 scores
@@ -198,6 +208,11 @@ class BasicBaseDataset(BaseDataset):
             num_predicted=results['predicted_relations'],
             num_gt=results['gt_relations'],
         )
+        relation_precision_no_type, relation_recall_no_type, relation_f1_no_type = get_precision_recall_f1(
+            num_correct=results['correct_relations_no_type'],
+            num_predicted=results['predicted_relations_no_type'],
+            num_gt=results['gt_relations_no_type'],
+        )
 
         final_results = {
             'wrong_reconstruction': results['wrong_reconstructions'] / results['num_sentences'],
@@ -213,6 +228,9 @@ class BasicBaseDataset(BaseDataset):
             'entity_precision_no_type': entity_precision_no_type,
             'entity_recall_no_type': entity_recall_no_type,
             'entity_f1_no_type': entity_f1_no_type,
+            'relation_precision_no_type': relation_precision_no_type,
+            'relation_recall_no_type': relation_recall_no_type,
+            'relation_f1_no_type': relation_f1_no_type,
         }
 
         return final_results

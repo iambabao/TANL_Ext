@@ -52,7 +52,7 @@ def save_checkpoint(output_dir, model, tokenizer, args):
     torch.save(args, os.path.join(output_dir, "training_args.bin"))
 
 
-def generate_data_during_training(args, data_processor, model, split):
+def evaluate_stage_one(args, data_processor, model, split):
     model = model.module if hasattr(model, "module") else model
 
     dataset = data_processor.create_tensor_dataset(args.task_s1_list, split=split)
@@ -81,35 +81,15 @@ def generate_data_during_training(args, data_processor, model, split):
 
     shift = 0
     results = {}
-    input_sentences = []
+    entity_ratios = []
     for task in args.task_s1_list:
         dataset = data_processor.datasets[task][split]
         results[task] = dataset.evaluate_generated_outputs(output_sentences[shift:shift + len(dataset)])
-        for example, sentence in zip(dataset.examples, output_sentences[shift:]):
-            parsed_outputs = dataset.output_format.run_inference(
-                example, sentence,
-                entity_types=dataset.entity_types,
-                relation_types=dataset.relation_types,
-            )
-            generated_entities = parsed_outputs[0]
-            augmentations = [([], start, end) for _, start, end in generated_entities]
-            input_sentences.append(augment_sentence(
-                example.tokens, augmentations,
-                dataset.input_format.BEGIN_ENTITY_TOKEN, dataset.input_format.SEPARATOR_TOKEN,
-                dataset.input_format.RELATION_SEPARATOR_TOKEN, dataset.input_format.END_ENTITY_TOKEN
-            ))
+        entity_ratios.append(results[task]["entity_f1"])
         shift += len(dataset)
     logger.info(json.dumps(results, ensure_ascii=False, indent=4))
 
-    encoded = data_processor.tokenizer.batch_encode_plus(
-        input_sentences,
-        padding="max_length",
-        truncation="longest_first",
-        max_length=args.max_src_length,
-        return_tensors="pt",
-    )
-
-    return encoded["input_ids"], encoded["attention_mask"]
+    return entity_ratios
 
 
 def train(args, data_processor, model, split):
@@ -179,7 +159,13 @@ def train(args, data_processor, model, split):
     for epoch_id in range(1, int(args.num_train_epochs) + 1):
         if epoch_id > args.num_pretrain_epochs and epoch_id % args.generate_data_per_epochs == 0:
             if args.local_rank in [-1, 0]:
-                input_ids_s2, attention_mask_s2 = generate_data_during_training(args, data_processor, model, split)
+                entity_ratios = evaluate_stage_one(args, data_processor, model, split)
+                input_ids_s2, attention_mask_s2, label_ids_s2 = data_processor.create_tensor_dataset(
+                    args.task_s2_list,
+                    split=split,
+                    keep_entity=entity_ratios,
+                    return_tensor=True,
+                )
             if args.local_rank != -1:
                 torch.distributed.barrier()  # wait if needed
         input_ids = torch.cat([input_ids_s1, input_ids_s2], dim=0)
