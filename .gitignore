@@ -15,7 +15,7 @@ backup.*
 backup_*
 *_backup_*
 
-!data/processed/example/*
+!data/example/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

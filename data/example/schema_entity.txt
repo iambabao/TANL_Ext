@@ -1,0 +1,7 @@
+GPE
+WEA
+PER
+VEH
+FAC
+ORG
+LOC
