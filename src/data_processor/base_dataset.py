@@ -147,7 +147,7 @@ class BaseDataset(Dataset, ABC):
                 f'{max_length_needed} long'
             )
 
-    def compute_features(self, max_input_length, max_output_length, prefix=False, keep_entity=0.00):
+    def compute_features(self, max_input_length, max_output_length, prefix=False, keep_entity=1.00):
         input_sentences = [self.input_format.format_input(
             example,
             prefix=prefix,

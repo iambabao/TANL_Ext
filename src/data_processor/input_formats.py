@@ -56,7 +56,10 @@ class EntityInputFormat(BaseInputFormat):
     name = 'entity'
 
     def _format_input(self, example: InputExample, keep_entity: float) -> str:
-        augmentations = [([(entity.type.natural,)], entity.start, entity.end) for entity in example.entities]
+        augmentations = [
+            ([(entity.type.natural,)], entity.start, entity.end)
+            for entity in example.entities if random.random() < keep_entity
+        ]
 
         return augment_sentence(
             example.tokens, augmentations,
@@ -74,7 +77,8 @@ class EntityBoundaryInputFormat(BaseInputFormat):
 
     def _format_input(self, example: InputExample, keep_entity: float) -> str:
         augmentations = [
-            ([], entity.start, entity.end) for entity in example.entities if random.random() < keep_entity
+            ([], entity.start, entity.end)
+            for entity in example.entities if random.random() < keep_entity
         ]
 
         return augment_sentence(

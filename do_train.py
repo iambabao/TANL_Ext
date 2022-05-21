@@ -109,9 +109,6 @@ def train(args, data_processor, model, split):
     set_seed(args.seed)
     model.zero_grad()
     for _ in range(int(args.num_train_epochs)):
-        # train_dataset = data_processor.create_tensor_dataset(args.task_list, split=split, keep_entity=args.keep_entity)
-        # train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-        # train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
             model.train()
@@ -355,7 +352,7 @@ def main():
     args = parser.parse_args()
 
     training_config = configparser.ConfigParser(allow_no_value=False)
-    training_config.read("config.temp.ini")
+    training_config.read("config.ini")
     assert args.task in training_config
     if args.task in training_config:
         if "task_list" in training_config[args.task]:

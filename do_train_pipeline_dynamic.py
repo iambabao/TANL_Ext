@@ -31,7 +31,6 @@ get_linear_schedule_with_warmup,
 )
 
 from src.data_processor import DataProcessor, load_my_dataset as load_dataset
-from src.utils.tanl_utils import augment_sentence
 from src.utils.my_utils import (
 init_logger,
 save_json,
@@ -418,7 +417,7 @@ def main():
     args = parser.parse_args()
 
     training_config = configparser.ConfigParser(allow_no_value=False)
-    training_config.read("config.temp.ini")
+    training_config.read("config.ini")
     assert args.task in training_config
     if args.task in training_config:
         if "task_list" in training_config[args.task]:
